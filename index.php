@@ -2,10 +2,15 @@
 session_start();
 
 define('PASSWORD_SISTEMA', 'Pasteleros2026');
+define('PASSWORD_LABORATORIO', 'Laboratorio2026');
 
 if (isset($_POST['login_password'])) {
-  if ($_POST['login_password'] === PASSWORD_SISTEMA) {
+  $rolLogin = $_POST['login_rol'] ?? 'obra_social';
+  $passwordEsperada = $rolLogin === 'laboratorio' ? PASSWORD_LABORATORIO : PASSWORD_SISTEMA;
+
+  if ($_POST['login_password'] === $passwordEsperada) {
     $_SESSION['analisis_ok'] = true;
+    $_SESSION['rol'] = $rolLogin === 'laboratorio' ? 'laboratorio' : 'obra_social';
     header("Location: " . $_SERVER['PHP_SELF']);
     exit;
   } else {
@@ -52,7 +57,8 @@ h1{
   color:#0f7a43;
 }
 
-input{
+input,
+select{
   width:100%;
   padding:14px;
   border-radius:10px;
@@ -92,6 +98,11 @@ button{
 
   <form method="POST">
 
+    <select name="login_rol" required>
+      <option value="obra_social">Obra Social</option>
+      <option value="laboratorio">Laboratorio</option>
+    </select>
+
     <input
       type="password"
       name="login_password"
@@ -111,6 +122,10 @@ button{
 </html>
 <?php
 exit;
+}
+
+if (empty($_SESSION['rol'])) {
+  $_SESSION['rol'] = 'obra_social';
 }
 
 /* ============================================================
@@ -135,9 +150,10 @@ define('DATA_FILE', __DIR__ . '/registros.json');
 define('ADJUNTOS_DIR', __DIR__ . '/adjuntos');
 define('PENDIENTES_DIR', ADJUNTOS_DIR . '/pendientes');
 define('REALIZADOS_DIR', ADJUNTOS_DIR . '/realizados');
+define('RESULTADOS_DIR', __DIR__ . '/resultados');
 
 function asegurarSistema(){
-  foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR] as $dir) {
+  foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR, RESULTADOS_DIR] as $dir) {
     if (!is_dir($dir)) {
       mkdir($dir, 0755, true);
     }
@@ -164,6 +180,20 @@ function responderJson($ok, $extra = []){
   header('Content-Type: application/json; charset=utf-8');
   echo json_encode(array_merge(['ok' => $ok], $extra), JSON_UNESCAPED_UNICODE);
   exit;
+}
+
+function usuarioEsObraSocial(){
+  return ($_SESSION['rol'] ?? '') === 'obra_social';
+}
+
+function usuarioEsLaboratorio(){
+  return ($_SESSION['rol'] ?? '') === 'laboratorio';
+}
+
+function requerirRol($rol){
+  if (($_SESSION['rol'] ?? '') !== $rol) {
+    throw new Exception('No tiene permisos para realizar esta accion.');
+  }
 }
 
 function limpiarTexto($txt){
@@ -231,6 +261,70 @@ function guardarAdjunto($campo, $estado, $dni, $nombre){
   return rutaWeb($destino);
 }
 
+function borrarArchivoSiExiste($rutaRelativa){
+  if (!$rutaRelativa) return;
+
+  $rutaRelativa = str_replace(['../', '..\\'], '', $rutaRelativa);
+  $archivo = __DIR__ . '/' . $rutaRelativa;
+
+  if (file_exists($archivo) && is_file($archivo)) {
+    @unlink($archivo);
+  }
+
+  $bases = [realpath(ADJUNTOS_DIR), realpath(RESULTADOS_DIR)];
+  $dir = dirname($archivo);
+
+  while ($dir && is_dir($dir)) {
+    $realDir = realpath($dir);
+    if (!$realDir || in_array($realDir, $bases, true)) {
+      break;
+    }
+
+    $restantes = array_diff(scandir($dir), ['.', '..']);
+
+    if (count($restantes) === 0) {
+      @rmdir($dir);
+      $dir = dirname($dir);
+    } else {
+      break;
+    }
+  }
+}
+
+function guardarResultado($campo, $dni, $nombre){
+  if (!isset($_FILES[$campo]) || $_FILES[$campo]['error'] === UPLOAD_ERR_NO_FILE) {
+    throw new Exception('Debe adjuntar el resultado.');
+  }
+
+  if ($_FILES[$campo]['error'] !== UPLOAD_ERR_OK) {
+    throw new Exception('No se pudo subir el resultado.');
+  }
+
+  $permitidos = ['pdf', 'jpg', 'jpeg', 'png'];
+  $original = $_FILES[$campo]['name'];
+  $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+
+  if (!in_array($ext, $permitidos, true)) {
+    throw new Exception('Archivo no permitido. Solo PDF, JPG, JPEG o PNG.');
+  }
+
+  $persona = limpiarNombreArchivo($nombre . ' - DNI ' . $dni);
+  $destDir = RESULTADOS_DIR . '/' . date('Y-m') . '/' . $persona;
+
+  if (!is_dir($destDir)) {
+    mkdir($destDir, 0755, true);
+  }
+
+  $nombreFinal = fechaArchivo() . ' - ' . limpiarNombreArchivo($original);
+  $destino = $destDir . '/' . $nombreFinal;
+
+  if (!move_uploaded_file($_FILES[$campo]['tmp_name'], $destino)) {
+    throw new Exception('No se pudo guardar el resultado en el hosting.');
+  }
+
+  return rutaWeb($destino);
+}
+
 function moverAdjuntoARealizados($rutaRelativa, $dni, $nombre){
   if (!$rutaRelativa) return '';
 
@@ -287,6 +381,47 @@ function filtrarRegistros($registros){
 
   usort($filtrados, function($a, $b){
     return strcmp($b['fechaISO'] ?? '', $a['fechaISO'] ?? '');
+  });
+
+  return array_values($filtrados);
+}
+
+function fechaRegistroDia($r){
+  $fecha = $r['fechaRealizado'] ?? $r['fechaCarga'] ?? '';
+
+  if ($fecha) {
+    $dt = DateTime::createFromFormat('d/m/Y H:i', $fecha);
+    if ($dt) return $dt->format('Y-m-d');
+  }
+
+  if (!empty($r['fechaISO'])) {
+    $ts = strtotime($r['fechaISO']);
+    if ($ts) return date('Y-m-d', $ts);
+  }
+
+  return '';
+}
+
+function filtrarRegistrosLaboratorio($registros){
+  $fecha = $_GET['fecha'] ?? date('Y-m-d');
+  $buscar = normalizar($_GET['buscar'] ?? '');
+
+  $filtrados = array_filter($registros, function($r) use ($fecha, $buscar){
+    if (($r['estado'] ?? '') !== 'Realizado') return false;
+    if (fechaRegistroDia($r) !== $fecha) return false;
+
+    if ($buscar !== '') {
+      $texto = normalizar(($r['nombre'] ?? '') . ' ' . ($r['dni'] ?? ''));
+      if (strpos($texto, $buscar) === false) return false;
+    }
+
+    return true;
+  });
+
+  usort($filtrados, function($a, $b){
+    $fechaA = $a['fechaRealizado'] ?? $a['fechaCarga'] ?? '';
+    $fechaB = $b['fechaRealizado'] ?? $b['fechaCarga'] ?? '';
+    return strcmp($fechaB, $fechaA);
   });
 
   return array_values($filtrados);
@@ -361,11 +496,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['api'])) {
   $registros = leerRegistros();
 
   if ($api === 'listar') {
+    if (!usuarioEsObraSocial()) responderJson(false, ['error' => 'No tiene permisos para listar esta vista.']);
     responderJson(true, ['registros' => filtrarRegistros($registros)]);
   }
 
   if ($api === 'resumen') {
+    if (!usuarioEsObraSocial()) responderJson(false, ['error' => 'No tiene permisos para ver el resumen.']);
     responderJson(true, resumenRegistros($registros));
+  }
+
+  if ($api === 'laboratorio') {
+    if (!usuarioEsLaboratorio()) responderJson(false, ['error' => 'No tiene permisos para ver laboratorio.']);
+    responderJson(true, ['registros' => filtrarRegistrosLaboratorio($registros)]);
   }
 
   responderJson(false, ['error' => 'API no válida']);
@@ -377,6 +519,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $registros = leerRegistros();
 
     if ($accion === 'crear') {
+      requerirRol('obra_social');
       $nombre = limpiarTexto($_POST['nombre'] ?? '');
       $dni = limpiarTexto($_POST['dni'] ?? '');
       $pagado = $_POST['pagado'] ?? 'No';
@@ -403,6 +546,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'nombre' => $nombre,
         'dni' => $dni,
         'estado' => $estado,
+        'fechaRealizado' => $estado === 'Realizado' ? date('d/m/Y H:i') : '',
         'motivo' => $_POST['motivo'] ?? '',
         'pagado' => $pagado,
         'monto' => $pagado === 'Sí' ? $monto : 0,
@@ -418,6 +562,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($accion === 'realizar') {
+      requerirRol('obra_social');
       $id = $_POST['id'] ?? '';
       $monto = (float)($_POST['monto'] ?? 0);
       $encontrado = false;
@@ -458,6 +603,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($accion === 'actualizarPago') {
+      requerirRol('obra_social');
       $id = $_POST['id'] ?? '';
       $pagado = $_POST['pagado'] ?? 'No';
       $monto = (float)($_POST['monto'] ?? 0);
@@ -484,6 +630,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
 if ($accion === 'eliminar') {
+  requerirRol('obra_social');
 
   $id = $_POST['id'] ?? '';
   $nuevo = [];
@@ -520,6 +667,7 @@ if ($accion === 'eliminar') {
           }
         }
       }
+      borrarArchivoSiExiste($r['resultado'] ?? '');
 
       continue;
     }
@@ -537,6 +685,40 @@ if ($accion === 'eliminar') {
     'mensaje' => 'Registro y adjunto eliminados.'
   ]);
 }
+
+    if ($accion === 'subirResultado') {
+      requerirRol('laboratorio');
+      $id = $_POST['id'] ?? '';
+      $encontrado = false;
+
+      foreach ($registros as &$r) {
+        if (($r['id'] ?? '') === $id) {
+          $encontrado = true;
+
+          if (($r['estado'] ?? '') !== 'Realizado') {
+            throw new Exception('Solo se pueden cargar resultados de registros realizados.');
+          }
+
+          $resultadoAnterior = $r['resultado'] ?? '';
+          $resultadoNuevo = guardarResultado('archivoResultado', $r['dni'] ?? '', $r['nombre'] ?? '');
+          borrarArchivoSiExiste($resultadoAnterior);
+
+          $r['resultado'] = $resultadoNuevo;
+          $r['fechaResultado'] = date('d/m/Y H:i');
+          $r['historial'][] = [
+            'fecha' => date('d/m/Y H:i'),
+            'accion' => 'Resultado cargado por laboratorio'
+          ];
+          break;
+        }
+      }
+      unset($r);
+
+      if (!$encontrado) throw new Exception('Registro no encontrado.');
+
+      guardarRegistros($registros);
+      responderJson(true, ['mensaje' => 'Resultado cargado correctamente.']);
+    }
 
     responderJson(false, ['error' => 'Acción no válida.']);
 
@@ -594,6 +776,24 @@ if ($accion === 'eliminar') {
 
     header p{
       opacity:.95;
+    }
+
+    .header-top{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:16px;
+      flex-wrap:wrap;
+    }
+
+    .logout{
+      color:white;
+      border:1px solid rgba(255,255,255,.7);
+      border-radius:8px;
+      padding:8px 10px;
+      text-decoration:none;
+      font-weight:bold;
+      background:rgba(255,255,255,.12);
     }
 
     .container{
@@ -911,11 +1111,17 @@ if ($accion === 'eliminar') {
 <body>
 
 <header>
-  <h1>REGISTRO_ANALISIS</h1>
-  <p>Gestión de análisis, pendientes, adjuntos y resumen</p>
+  <div class="header-top">
+    <div>
+      <h1><?= usuarioEsLaboratorio() ? 'Laboratorio - Resultados de analisis' : 'REGISTRO_ANALISIS' ?></h1>
+      <p><?= usuarioEsLaboratorio() ? 'Carga y consulta de resultados' : 'Gestion de analisis, pendientes, adjuntos y resumen' ?></p>
+    </div>
+    <a class="logout" href="?logout=1">Cerrar sesion</a>
+  </div>
 </header>
 
 <div class="container">
+<?php if (usuarioEsObraSocial()) { ?>
 
   <div class="tabs">
     <button class="tab-btn active" onclick="abrirTab('buscar', this)">Tabla / Pendientes</button>
@@ -974,12 +1180,13 @@ if ($accion === 'eliminar') {
             <th>Pago</th>
             <th>Monto</th>
             <th>Pedido</th>
+            <th>Resultado</th>
             <th>Acción</th>
           </tr>
         </thead>
 
         <tbody id="tablaRegistros">
-          <tr><td colspan="8">Cargando...</td></tr>
+          <tr><td colspan="9">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -1080,6 +1287,49 @@ if ($accion === 'eliminar') {
       <div id="detalleMeses"></div>
     </div>
   </div>
+
+<?php } else { ?>
+
+  <div class="card">
+    <h2>Laboratorio - Resultados de analisis</h2>
+
+    <div class="grid">
+      <div class="campo">
+        <label>Fecha realizado/envio</label>
+        <input type="date" id="labFecha" value="<?= date('Y-m-d') ?>">
+      </div>
+
+      <div class="campo">
+        <label>Buscar nombre o DNI</label>
+        <input type="text" id="labBuscar" placeholder="Nombre o DNI" oninput="cargarLaboratorio()">
+      </div>
+
+      <div class="campo">
+        <label>&nbsp;</label>
+        <button type="button" onclick="cargarLaboratorio()">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card tabla-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha realizado/envio</th>
+          <th>Nombre</th>
+          <th>DNI</th>
+          <th>Pedido</th>
+          <th>Resultado</th>
+        </tr>
+      </thead>
+
+      <tbody id="tablaLaboratorio">
+        <tr><td colspan="5">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<?php } ?>
 
 </div>
 
@@ -1253,7 +1503,9 @@ async function apiPost(formData){
   return await res.json();
 }
 
-document.getElementById('formCarga').addEventListener('submit', async function(e){
+const formCarga = document.getElementById('formCarga');
+if(formCarga){
+formCarga.addEventListener('submit', async function(e){
   e.preventDefault();
 
   const nombre = document.getElementById('nombre').value.trim();
@@ -1320,6 +1572,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
     mensaje.innerHTML = '❌ ' + (data.error || 'Error al guardar');
   }
 });
+}
 
 async function cargarRegistros(){
   const buscar = document.getElementById('buscarTexto')?.value || '';
@@ -1327,7 +1580,7 @@ async function cargarRegistros(){
   const pago = document.getElementById('buscarPago')?.value || 'Todos';
 
   const tbody = document.getElementById('tablaRegistros');
-  tbody.innerHTML = '<tr><td colspan="8">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9">Cargando...</td></tr>';
 
   const data = await apiGet(
     'api=listar' +
@@ -1339,12 +1592,12 @@ async function cargarRegistros(){
   tbody.innerHTML = '';
 
   if(!data.ok){
-    tbody.innerHTML = `<tr><td colspan="8">${data.error || 'Error al cargar registros'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">${data.error || 'Error al cargar registros'}</td></tr>`;
     return;
   }
 
   if(!data.registros.length){
-    tbody.innerHTML = `<tr><td colspan="8">No hay registros para este filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">No hay registros para este filtro.</td></tr>`;
     return;
   }
 
@@ -1359,6 +1612,15 @@ async function cargarRegistros(){
         <a class="link-btn" href="${adj}" download>Descargar</a>
       `
       : '-';
+
+    const res = r.resultado || '';
+    const resExt = res.split('.').pop().toLowerCase();
+    const resultadoHtml = res
+      ? `
+        <button class="light" onclick="verPedido('${res.replace(/'/g, "\\'")}', '${resExt}')">Ver</button>
+        <a class="link-btn" href="${res}" download>Descargar</a>
+      `
+      : 'Pendiente';
 
     const tr = document.createElement('tr');
 
@@ -1382,6 +1644,8 @@ async function cargarRegistros(){
       <td>${Number(r.monto) === 0 && r.motivo ? r.motivo : money(r.monto)}</td>
 
       <td>${pedidoHtml}</td>
+
+      <td>${resultadoHtml}</td>
 
       <td>
   ${
@@ -1519,6 +1783,93 @@ async function cargarResumen(){
   `).join('');
 }
 
+async function cargarLaboratorio(){
+  const tbody = document.getElementById('tablaLaboratorio');
+  if(!tbody) return;
+
+  const fecha = document.getElementById('labFecha')?.value || '';
+  const buscar = document.getElementById('labBuscar')?.value || '';
+
+  tbody.innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
+
+  const data = await apiGet(
+    'api=laboratorio' +
+    '&fecha=' + encodeURIComponent(fecha) +
+    '&buscar=' + encodeURIComponent(buscar)
+  );
+
+  tbody.innerHTML = '';
+
+  if(!data.ok){
+    tbody.innerHTML = `<tr><td colspan="5">${data.error || 'Error al cargar registros'}</td></tr>`;
+    return;
+  }
+
+  if(!data.registros.length){
+    tbody.innerHTML = '<tr><td colspan="5">No hay registros realizados para este filtro.</td></tr>';
+    return;
+  }
+
+  data.registros.forEach(r => {
+    const adj = r.adjunto || '';
+    const adjExt = adj.split('.').pop().toLowerCase();
+    const res = r.resultado || '';
+    const resExt = res.split('.').pop().toLowerCase();
+
+    const pedidoHtml = adj
+      ? `
+        <button class="light" onclick="verPedido('${adj.replace(/'/g, "\\'")}', '${adjExt}')">Ver</button>
+        <a class="link-btn" href="${adj}" download>Descargar</a>
+      `
+      : '-';
+
+    const resultadoHtml = res
+      ? `
+        <button class="light" onclick="verPedido('${res.replace(/'/g, "\\'")}', '${resExt}')">Ver</button>
+        <a class="link-btn" href="${res}" download>Descargar</a>
+        <button onclick="subirResultado('${r.id}')">Reemplazar</button>
+      `
+      : `<button onclick="subirResultado('${r.id}')">Subir resultado</button>`;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.fechaRealizado || r.fechaCarga || ''}</td>
+      <td><strong>${r.nombre || ''}</strong></td>
+      <td>${r.dni || ''}</td>
+      <td>${pedidoHtml}</td>
+      <td>${resultadoHtml}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function subirResultado(id){
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.jpg,.jpeg,.png,.pdf';
+
+  input.onchange = async () => {
+    const archivo = input.files[0];
+    if(!archivo) return;
+
+    const fd = new FormData();
+    fd.append('accion', 'subirResultado');
+    fd.append('id', id);
+    fd.append('archivoResultado', archivo);
+
+    const data = await apiPost(fd);
+
+    if(data.ok){
+      await cargarLaboratorio();
+      alert('Resultado cargado correctamente');
+    }else{
+      alert(data.error || 'Error al subir resultado');
+    }
+  };
+
+  input.click();
+}
+
 function verPedido(url, ext){
   const modal = document.getElementById('visorModal');
   const body = document.getElementById('visorBody');
@@ -1549,8 +1900,15 @@ document.getElementById('visorModal').addEventListener('click', function(e){
   if(e.target === this) cerrarVisor();
 });
 
-cargarRegistros();
-cargarResumen();
+if(document.getElementById('tablaRegistros')){
+  cargarRegistros();
+  cargarResumen();
+}
+
+if(document.getElementById('tablaLaboratorio')){
+  document.getElementById('labFecha')?.addEventListener('change', cargarLaboratorio);
+  cargarLaboratorio();
+}
 </script>
 
 </body>
