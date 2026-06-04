@@ -1517,7 +1517,7 @@ async function cargarRegistros(){
   ${
     r.estado === 'Pendiente'
       ? `
-        <button onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'})">
+        <button onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'}, '${(r.motivo || '').replace(/'/g, "\\'")}')">
           Realizar
         </button>
 
@@ -1540,10 +1540,10 @@ async function cargarRegistros(){
   });
 }
 
-async function marcarRealizado(id, pagado, montoActual, tieneAdjunto){
+async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
   let monto = montoActual;
 
-  if(pagado !== 'Sí' || Number(montoActual) <= 0){
+  if(pagado !== 'Sí' || (Number(montoActual) === 0 && !motivo)){
     monto = prompt('Ingrese el monto pagado');
 
     if(monto === null || monto === '' || Number(monto) < 0){
