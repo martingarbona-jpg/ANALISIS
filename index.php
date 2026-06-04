@@ -706,6 +706,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       responderJson(true, ['mensaje' => 'Pago actualizado.']);
     }
 
+    if ($accion === 'editarRegistro') {
+      $id = $_POST['id'] ?? '';
+      $nombre = limpiarTexto($_POST['nombre'] ?? '');
+      $email = limpiarTexto($_POST['email'] ?? '');
+      $pagado = $_POST['pagado'] ?? 'No';
+      $monto = (float)($_POST['monto'] ?? 0);
+      $motivo = limpiarTexto($_POST['motivo'] ?? '');
+      $motivo = str_replace(['ONCOLÓGICO', 'EXCEPCIÓN'], ['ONCOLOGICO', 'EXCEPCION'], $motivo);
+      $motivosPermitidos = ['PMI', 'ONCOLOGICO', 'DISCAPACIDAD', 'EXCEPCION'];
+      $encontrado = false;
+
+      if ($nombre === '') throw new Exception('Debe cargar nombre y apellido.');
+      if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new Exception('Email inválido.');
+
+      $pagadoFinal = esPagadoSi($pagado) ? 'Sí' : 'No';
+
+      if ($pagadoFinal === 'No') {
+        $monto = 0;
+        $motivo = '';
+      } else {
+        if ($monto < 0) throw new Exception('Monto inválido.');
+
+        if ($monto == 0) {
+          if ($motivo === '') throw new Exception('Debe seleccionar el motivo.');
+          if (!in_array($motivo, $motivosPermitidos, true)) throw new Exception('Motivo inválido.');
+        } else {
+          $motivo = '';
+        }
+      }
+
+      foreach ($registros as &$r) {
+        if (($r['id'] ?? '') === $id) {
+          $encontrado = true;
+          $r['nombre'] = $nombre;
+          $r['email'] = $email;
+          $r['pagado'] = $pagadoFinal;
+          $r['monto'] = $monto;
+          $r['motivo'] = $motivo;
+          $r['historial'][] = [
+            'fecha' => date('d/m/Y H:i'),
+            'accion' => 'Registro editado'
+          ];
+          break;
+        }
+      }
+      unset($r);
+
+      if (!$encontrado) throw new Exception('Registro no encontrado.');
+
+      guardarRegistros($registros);
+      responderJson(true, ['mensaje' => 'Registro actualizado correctamente']);
+    }
+
     if ($accion === 'subirResultado') {
       $id = $_POST['id'] ?? '';
       $encontrado = false;
@@ -1194,6 +1247,17 @@ if ($accion === 'eliminar') {
       background:white;
     }
 
+    .edit-content{
+      height:auto;
+      max-height:92vh;
+    }
+
+    .edit-body{
+      background:white;
+      display:block;
+      padding:18px;
+    }
+
     .x{
       background:white;
       color:var(--verde);
@@ -1419,8 +1483,67 @@ if ($accion === 'eliminar') {
   </div>
 </div>
 
+<div class="modal" id="editarModal">
+  <div class="modal-content edit-content">
+    <div class="modal-head">
+      <strong>Editar registro</strong>
+      <button class="x" onclick="cerrarEditar()">Cerrar</button>
+    </div>
+    <div class="modal-body edit-body">
+      <form id="formEditar">
+        <input type="hidden" name="accion" value="editarRegistro">
+        <input type="hidden" name="id" id="editarId">
+
+        <div class="grid">
+          <div class="campo">
+            <label>Nombre</label>
+            <input type="text" name="nombre" id="editarNombre" autocomplete="off">
+          </div>
+
+          <div class="campo">
+            <label>Email</label>
+            <input type="email" name="email" id="editarEmail" autocomplete="off">
+          </div>
+
+          <div class="campo">
+            <label>Pagado</label>
+            <select name="pagado" id="editarPagado" onchange="toggleEditarMonto()">
+              <option>No</option>
+              <option>Sí</option>
+            </select>
+          </div>
+
+          <div class="campo">
+            <label>Monto</label>
+            <input type="number" name="monto" id="editarMonto" min="0" step="0.01">
+          </div>
+
+          <div class="campo" id="editarCampoMotivo">
+            <label>Motivo</label>
+            <select name="motivo" id="editarMotivo">
+              <option value="">Seleccionar</option>
+              <option value="PMI">PMI</option>
+              <option value="ONCOLOGICO">ONCOLÓGICO</option>
+              <option value="DISCAPACIDAD">DISCAPACIDAD</option>
+              <option value="EXCEPCION">EXCEPCIÓN</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="acciones">
+          <button type="submit">Guardar cambios</button>
+          <button type="button" class="light" onclick="cerrarEditar()">Cancelar</button>
+        </div>
+
+        <div class="mensaje" id="editarMensaje"></div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script>
 let filtroEstadoActual = 'Pendiente';
+let registrosCache = {};
 
 const CARNET_URL = "https://script.google.com/macros/s/AKfycby86fvv4wOHh3eth7mLTmvSwXiD6INr7syd0tJ7DPQ0gPeH7SvoCfdk6wb5pCRSDh81/exec";
 
@@ -1565,6 +1688,12 @@ function esPagadoSiJs(valor){
   return ['Sí', 'S\u00c3\u00ad'].includes(String(valor || ''));
 }
 
+function normalizarMotivo(valor){
+  return String(valor || '')
+    .replace('ONCOLÓGICO', 'ONCOLOGICO')
+    .replace('EXCEPCIÓN', 'EXCEPCION');
+}
+
 function htmlAttr(txt){
   return String(txt || '')
     .replace(/&/g, '&amp;')
@@ -1701,7 +1830,10 @@ async function cargarRegistros(){
     return;
   }
 
+  registrosCache = {};
+
   data.registros.forEach(r=>{
+    registrosCache[r.id] = r;
     const adj = r.adjunto || '';
     const ext = adj.split('.').pop().toLowerCase();
     const resultado = r.resultado || '';
@@ -1773,12 +1905,20 @@ async function cargarRegistros(){
           Realizar
         </button>
 
+        <button class="light" onclick="abrirEditar('${r.id}')">
+          Editar
+        </button>
+
         <button class="danger" onclick="eliminarRegistro('${r.id}')">
           Eliminar
         </button>
       `
       : `
         ✔
+
+        <button class="light" onclick="abrirEditar('${r.id}')">
+          Editar
+        </button>
 
         <button class="danger" onclick="eliminarRegistro('${r.id}')">
           Eliminar
@@ -1849,6 +1989,119 @@ async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
     alert(data.error || 'Error');
   }
 }
+
+function toggleEditarMonto(){
+  const pagado = document.getElementById('editarPagado').value;
+  const monto = document.getElementById('editarMonto');
+  const campoMotivo = document.getElementById('editarCampoMotivo');
+  const motivo = document.getElementById('editarMotivo');
+
+  if(esPagadoSiJs(pagado)){
+    monto.disabled = false;
+    campoMotivo.style.display = Number(monto.value || 0) === 0 ? 'flex' : 'none';
+  }else{
+    monto.value = 0;
+    monto.disabled = true;
+    motivo.value = '';
+    campoMotivo.style.display = 'none';
+  }
+}
+
+document.getElementById('editarMonto').addEventListener('input', function(){
+  const campoMotivo = document.getElementById('editarCampoMotivo');
+  const motivo = document.getElementById('editarMotivo');
+
+  if(Number(this.value || 0) === 0){
+    campoMotivo.style.display = 'flex';
+  }else{
+    motivo.value = '';
+    campoMotivo.style.display = 'none';
+  }
+});
+
+function abrirEditar(id){
+  const r = registrosCache[id];
+  if(!r){
+    alert('Registro no encontrado');
+    return;
+  }
+
+  document.getElementById('editarId').value = r.id || '';
+  document.getElementById('editarNombre').value = r.nombre || '';
+  document.getElementById('editarEmail').value = r.email || '';
+  document.getElementById('editarPagado').value = esPagadoSiJs(r.pagado || 'No') ? 'Sí' : 'No';
+  document.getElementById('editarMonto').value = Number(r.monto || 0);
+  document.getElementById('editarMotivo').value = normalizarMotivo(r.motivo);
+  document.getElementById('editarMensaje').innerHTML = '';
+
+  toggleEditarMonto();
+  document.getElementById('editarModal').classList.add('active');
+}
+
+function cerrarEditar(){
+  document.getElementById('editarModal').classList.remove('active');
+}
+
+document.getElementById('editarModal').addEventListener('click', function(e){
+  if(e.target === this) cerrarEditar();
+});
+
+document.getElementById('formEditar').addEventListener('submit', async function(e){
+  e.preventDefault();
+
+  const nombre = document.getElementById('editarNombre').value.trim();
+  const email = document.getElementById('editarEmail').value.trim();
+  const pagado = document.getElementById('editarPagado').value;
+  const monto = document.getElementById('editarMonto').value || 0;
+  const motivo = document.getElementById('editarMotivo').value;
+  const mensaje = document.getElementById('editarMensaje');
+
+  if(!nombre){
+    alert('Debe cargar nombre');
+    return;
+  }
+
+  if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    alert('Email inválido');
+    return;
+  }
+
+  if(esPagadoSiJs(pagado) && Number(monto) < 0){
+    alert('Monto inválido');
+    return;
+  }
+
+  if(esPagadoSiJs(pagado) && Number(monto) === 0 && !motivo){
+    alert('Debe seleccionar el motivo');
+    return;
+  }
+
+  const fd = new FormData(this);
+
+  if(!esPagadoSiJs(pagado)){
+    fd.set('monto', '0');
+    fd.set('motivo', '');
+  }
+
+  if(esPagadoSiJs(pagado) && Number(monto) > 0){
+    fd.set('motivo', '');
+  }
+
+  mensaje.className = 'mensaje';
+  mensaje.innerHTML = '⏳ Guardando cambios...';
+
+  const data = await apiPost(fd);
+
+  if(data.ok){
+    cerrarEditar();
+    await cargarRegistros();
+    await cargarResumen();
+    alert('Registro actualizado correctamente');
+  }else{
+    mensaje.className = 'mensaje error';
+    mensaje.innerHTML = '❌ ' + (data.error || 'Error al guardar');
+  }
+});
 
 async function subirResultado(id){
   const input = document.createElement('input');
