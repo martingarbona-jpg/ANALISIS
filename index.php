@@ -2,15 +2,10 @@
 session_start();
 
 define('PASSWORD_SISTEMA', 'Pasteleros2026');
-define('PASSWORD_LABORATORIO', 'Laboratorio2026');
 
 if (isset($_POST['login_password'])) {
-  $rolLogin = $_POST['login_rol'] ?? 'obra_social';
-  $passwordEsperada = $rolLogin === 'laboratorio' ? PASSWORD_LABORATORIO : PASSWORD_SISTEMA;
-
-  if ($_POST['login_password'] === $passwordEsperada) {
+  if ($_POST['login_password'] === PASSWORD_SISTEMA) {
     $_SESSION['analisis_ok'] = true;
-    $_SESSION['rol'] = $rolLogin === 'laboratorio' ? 'laboratorio' : 'obra_social';
     header("Location: " . $_SERVER['PHP_SELF']);
     exit;
   } else {
@@ -57,8 +52,7 @@ h1{
   color:#0f7a43;
 }
 
-input,
-select{
+input{
   width:100%;
   padding:14px;
   border-radius:10px;
@@ -98,11 +92,6 @@ button{
 
   <form method="POST">
 
-    <select name="login_rol" required>
-      <option value="obra_social">Obra Social</option>
-      <option value="laboratorio">Laboratorio</option>
-    </select>
-
     <input
       type="password"
       name="login_password"
@@ -122,10 +111,6 @@ button{
 </html>
 <?php
 exit;
-}
-
-if (empty($_SESSION['rol'])) {
-  $_SESSION['rol'] = 'obra_social';
 }
 
 /* ============================================================
@@ -150,17 +135,9 @@ define('DATA_FILE', __DIR__ . '/registros.json');
 define('ADJUNTOS_DIR', __DIR__ . '/adjuntos');
 define('PENDIENTES_DIR', ADJUNTOS_DIR . '/pendientes');
 define('REALIZADOS_DIR', ADJUNTOS_DIR . '/realizados');
-define('RESULTADOS_DIR', __DIR__ . '/resultados');
-define('SMTP_HOST', 'pastagl.ferozo.com');
-define('SMTP_PORT', 465);
-define('SMTP_SECURE', 'ssl');
-define('SMTP_USER', 'consultorios@pastelerosmendoza.org');
-define('SMTP_PASS', 'PEGAR_CONTRASENA_SOLO_EN_DONWEB');
-define('SMTP_FROM', 'consultorios@pastelerosmendoza.org');
-define('SMTP_FROM_NAME', 'Consultorios OSP Pasteleros Mendoza');
 
 function asegurarSistema(){
-  foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR, RESULTADOS_DIR] as $dir) {
+  foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR] as $dir) {
     if (!is_dir($dir)) {
       mkdir($dir, 0755, true);
     }
@@ -189,20 +166,6 @@ function responderJson($ok, $extra = []){
   exit;
 }
 
-function usuarioEsObraSocial(){
-  return ($_SESSION['rol'] ?? '') === 'obra_social';
-}
-
-function usuarioEsLaboratorio(){
-  return ($_SESSION['rol'] ?? '') === 'laboratorio';
-}
-
-function requerirRol($rol){
-  if (($_SESSION['rol'] ?? '') !== $rol) {
-    throw new Exception('No tiene permisos para realizar esta accion.');
-  }
-}
-
 function limpiarTexto($txt){
   $txt = trim((string)$txt);
   $txt = preg_replace('/\s+/', ' ', $txt);
@@ -226,118 +189,6 @@ function rutaWeb($rutaAbsoluta){
   $rel = str_replace(__DIR__ . DIRECTORY_SEPARATOR, '', $rutaAbsoluta);
   $rel = str_replace(DIRECTORY_SEPARATOR, '/', $rel);
   return $rel;
-}
-
-function rutaAbsolutaSegura($rutaRelativa){
-  $rutaRelativa = str_replace(['../', '..\\'], '', (string)$rutaRelativa);
-  return __DIR__ . '/' . $rutaRelativa;
-}
-
-function cargarPhpMailer(){
-  $autoload = __DIR__ . '/vendor/autoload.php';
-  if (file_exists($autoload)) {
-    require_once $autoload;
-  }
-
-  if (class_exists('\PHPMailer\PHPMailer\PHPMailer')) {
-    return true;
-  }
-
-  $baseManual = __DIR__ . '/phpmailer/src';
-  $archivos = [
-    $baseManual . '/Exception.php',
-    $baseManual . '/PHPMailer.php',
-    $baseManual . '/SMTP.php'
-  ];
-
-  foreach ($archivos as $archivo) {
-    if (!file_exists($archivo)) {
-      return false;
-    }
-  }
-
-  foreach ($archivos as $archivo) {
-    require_once $archivo;
-  }
-
-  return class_exists('\PHPMailer\PHPMailer\PHPMailer');
-}
-
-function enviarEmailResultadoMail($email, $nombre, $rutaResultadoAbs){
-  $asunto = 'Resultado de analisis - Obra Social Pasteleros';
-  $cuerpo = "Estimado/a {$nombre}:\n\n";
-  $cuerpo .= "Adjuntamos el resultado de los analisis realizados en nuestros consultorios.\n\n";
-  $cuerpo .= "Saludos.\n";
-  $cuerpo .= "Obra Social Pasteleros Mendoza\n";
-
-  if (!file_exists($rutaResultadoAbs) || !is_file($rutaResultadoAbs)) {
-    throw new Exception('No se encontro el archivo de resultado para adjuntar.');
-  }
-
-  $contenido = chunk_split(base64_encode(file_get_contents($rutaResultadoAbs)));
-  $nombreArchivo = basename($rutaResultadoAbs);
-  $boundary = '=_Resultado_' . md5((string)microtime(true));
-
-  $headers = [];
-  $headers[] = 'From: ' . SMTP_FROM_NAME . ' <' . SMTP_FROM . '>';
-  $headers[] = 'MIME-Version: 1.0';
-  $headers[] = 'Content-Type: multipart/mixed; boundary="' . $boundary . '"';
-
-  $mensaje = "--{$boundary}\r\n";
-  $mensaje .= "Content-Type: text/plain; charset=UTF-8\r\n";
-  $mensaje .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
-  $mensaje .= $cuerpo . "\r\n";
-  $mensaje .= "--{$boundary}\r\n";
-  $mensaje .= "Content-Type: application/octet-stream; name=\"{$nombreArchivo}\"\r\n";
-  $mensaje .= "Content-Transfer-Encoding: base64\r\n";
-  $mensaje .= "Content-Disposition: attachment; filename=\"{$nombreArchivo}\"\r\n\r\n";
-  $mensaje .= $contenido . "\r\n";
-  $mensaje .= "--{$boundary}--";
-
-  if (!mail($email, $asunto, $mensaje, implode("\r\n", $headers))) {
-    throw new Exception('No se pudo enviar el email con mail(). Instale PHPMailer en vendor/ o phpmailer/ para usar SMTP.');
-  }
-}
-
-function enviarEmailResultado($registro, $rutaResultadoRelativa){
-  $email = trim((string)($registro['email'] ?? ''));
-
-  if ($email === '') {
-    return ['enviado' => false, 'error' => ''];
-  }
-
-  if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-    return ['enviado' => false, 'error' => 'Email invalido.'];
-  }
-
-  $nombre = limpiarTexto($registro['nombre'] ?? '');
-  $rutaResultadoAbs = rutaAbsolutaSegura($rutaResultadoRelativa);
-
-  try {
-    if (cargarPhpMailer()) {
-      $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
-      $mail->isSMTP();
-      $mail->Host = SMTP_HOST;
-      $mail->Port = SMTP_PORT;
-      $mail->SMTPAuth = true;
-      $mail->Username = SMTP_USER;
-      $mail->Password = SMTP_PASS;
-      $mail->SMTPSecure = SMTP_SECURE;
-      $mail->CharSet = 'UTF-8';
-      $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
-      $mail->addAddress($email, $nombre);
-      $mail->Subject = 'Resultado de analisis - Obra Social Pasteleros';
-      $mail->Body = "Estimado/a {$nombre}:\n\nAdjuntamos el resultado de los analisis realizados en nuestros consultorios.\n\nSaludos.\nObra Social Pasteleros Mendoza";
-      $mail->addAttachment($rutaResultadoAbs);
-      $mail->send();
-    } else {
-      enviarEmailResultadoMail($email, $nombre, $rutaResultadoAbs);
-    }
-
-    return ['enviado' => true, 'error' => ''];
-  } catch (Throwable $e) {
-    return ['enviado' => false, 'error' => $e->getMessage()];
-  }
 }
 
 function guardarAdjunto($campo, $estado, $dni, $nombre){
@@ -375,70 +226,6 @@ function guardarAdjunto($campo, $estado, $dni, $nombre){
 
   if (!move_uploaded_file($_FILES[$campo]['tmp_name'], $destino)) {
     throw new Exception('No se pudo guardar el adjunto en el hosting.');
-  }
-
-  return rutaWeb($destino);
-}
-
-function borrarArchivoSiExiste($rutaRelativa){
-  if (!$rutaRelativa) return;
-
-  $rutaRelativa = str_replace(['../', '..\\'], '', $rutaRelativa);
-  $archivo = __DIR__ . '/' . $rutaRelativa;
-
-  if (file_exists($archivo) && is_file($archivo)) {
-    @unlink($archivo);
-  }
-
-  $bases = [realpath(ADJUNTOS_DIR), realpath(RESULTADOS_DIR)];
-  $dir = dirname($archivo);
-
-  while ($dir && is_dir($dir)) {
-    $realDir = realpath($dir);
-    if (!$realDir || in_array($realDir, $bases, true)) {
-      break;
-    }
-
-    $restantes = array_diff(scandir($dir), ['.', '..']);
-
-    if (count($restantes) === 0) {
-      @rmdir($dir);
-      $dir = dirname($dir);
-    } else {
-      break;
-    }
-  }
-}
-
-function guardarResultado($campo, $dni, $nombre){
-  if (!isset($_FILES[$campo]) || $_FILES[$campo]['error'] === UPLOAD_ERR_NO_FILE) {
-    throw new Exception('Debe adjuntar el resultado.');
-  }
-
-  if ($_FILES[$campo]['error'] !== UPLOAD_ERR_OK) {
-    throw new Exception('No se pudo subir el resultado.');
-  }
-
-  $permitidos = ['pdf', 'jpg', 'jpeg', 'png'];
-  $original = $_FILES[$campo]['name'];
-  $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
-
-  if (!in_array($ext, $permitidos, true)) {
-    throw new Exception('Archivo no permitido. Solo PDF, JPG, JPEG o PNG.');
-  }
-
-  $persona = limpiarNombreArchivo($nombre . ' - DNI ' . $dni);
-  $destDir = RESULTADOS_DIR . '/' . date('Y-m') . '/' . $persona;
-
-  if (!is_dir($destDir)) {
-    mkdir($destDir, 0755, true);
-  }
-
-  $nombreFinal = fechaArchivo() . ' - ' . limpiarNombreArchivo($original);
-  $destino = $destDir . '/' . $nombreFinal;
-
-  if (!move_uploaded_file($_FILES[$campo]['tmp_name'], $destino)) {
-    throw new Exception('No se pudo guardar el resultado en el hosting.');
   }
 
   return rutaWeb($destino);
@@ -486,7 +273,6 @@ function filtrarRegistros($registros){
     if ($buscar !== '') {
       $texto = normalizar(
         ($r['nombre'] ?? '') . ' ' .
-        ($r['email'] ?? '') . ' ' .
         ($r['dni'] ?? '') . ' ' .
         ($r['fechaCarga'] ?? '') . ' ' .
         ($r['estado'] ?? '') . ' ' .
@@ -501,47 +287,6 @@ function filtrarRegistros($registros){
 
   usort($filtrados, function($a, $b){
     return strcmp($b['fechaISO'] ?? '', $a['fechaISO'] ?? '');
-  });
-
-  return array_values($filtrados);
-}
-
-function fechaRegistroDia($r){
-  $fecha = $r['fechaRealizado'] ?? $r['fechaCarga'] ?? '';
-
-  if ($fecha) {
-    $dt = DateTime::createFromFormat('d/m/Y H:i', $fecha);
-    if ($dt) return $dt->format('Y-m-d');
-  }
-
-  if (!empty($r['fechaISO'])) {
-    $ts = strtotime($r['fechaISO']);
-    if ($ts) return date('Y-m-d', $ts);
-  }
-
-  return '';
-}
-
-function filtrarRegistrosLaboratorio($registros){
-  $fecha = $_GET['fecha'] ?? date('Y-m-d');
-  $buscar = normalizar($_GET['buscar'] ?? '');
-
-  $filtrados = array_filter($registros, function($r) use ($fecha, $buscar){
-    if (($r['estado'] ?? '') !== 'Realizado') return false;
-    if (fechaRegistroDia($r) !== $fecha) return false;
-
-    if ($buscar !== '') {
-      $texto = normalizar(($r['nombre'] ?? '') . ' ' . ($r['dni'] ?? ''));
-      if (strpos($texto, $buscar) === false) return false;
-    }
-
-    return true;
-  });
-
-  usort($filtrados, function($a, $b){
-    $fechaA = $a['fechaRealizado'] ?? $a['fechaCarga'] ?? '';
-    $fechaB = $b['fechaRealizado'] ?? $b['fechaCarga'] ?? '';
-    return strcmp($fechaB, $fechaA);
   });
 
   return array_values($filtrados);
@@ -616,18 +361,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['api'])) {
   $registros = leerRegistros();
 
   if ($api === 'listar') {
-    if (!usuarioEsObraSocial()) responderJson(false, ['error' => 'No tiene permisos para listar esta vista.']);
     responderJson(true, ['registros' => filtrarRegistros($registros)]);
   }
 
   if ($api === 'resumen') {
-    if (!usuarioEsObraSocial()) responderJson(false, ['error' => 'No tiene permisos para ver el resumen.']);
     responderJson(true, resumenRegistros($registros));
-  }
-
-  if ($api === 'laboratorio') {
-    if (!usuarioEsLaboratorio()) responderJson(false, ['error' => 'No tiene permisos para ver laboratorio.']);
-    responderJson(true, ['registros' => filtrarRegistrosLaboratorio($registros)]);
   }
 
   responderJson(false, ['error' => 'API no válida']);
@@ -639,17 +377,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $registros = leerRegistros();
 
     if ($accion === 'crear') {
-      requerirRol('obra_social');
       $nombre = limpiarTexto($_POST['nombre'] ?? '');
       $dni = limpiarTexto($_POST['dni'] ?? '');
-      $email = strtolower(limpiarTexto($_POST['email'] ?? ''));
       $pagado = $_POST['pagado'] ?? 'No';
       $estado = $_POST['estado'] ?? 'Pendiente';
       $monto = (float)($_POST['monto'] ?? 0);
 
       if ($nombre === '') throw new Exception('Debe cargar nombre y apellido.');
       if ($dni === '') throw new Exception('Debe cargar DNI.');
-      if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new Exception('Email invalido.');
       if ($pagado === 'Sí' && $monto < 0) throw new Exception('Monto inválido.');
       if (!in_array($estado, ['Pendiente', 'Realizado'], true)) $estado = 'Pendiente';
 
@@ -667,9 +402,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'fechaCarga' => date('d/m/Y H:i'),
         'nombre' => $nombre,
         'dni' => $dni,
-        'email' => $email,
         'estado' => $estado,
-        'fechaRealizado' => $estado === 'Realizado' ? date('d/m/Y H:i') : '',
         'motivo' => $_POST['motivo'] ?? '',
         'pagado' => $pagado,
         'monto' => $pagado === 'Sí' ? $monto : 0,
@@ -685,7 +418,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($accion === 'realizar') {
-      requerirRol('obra_social');
       $id = $_POST['id'] ?? '';
       $monto = (float)($_POST['monto'] ?? 0);
       $encontrado = false;
@@ -726,7 +458,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($accion === 'actualizarPago') {
-      requerirRol('obra_social');
       $id = $_POST['id'] ?? '';
       $pagado = $_POST['pagado'] ?? 'No';
       $monto = (float)($_POST['monto'] ?? 0);
@@ -753,7 +484,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
 if ($accion === 'eliminar') {
-  requerirRol('obra_social');
 
   $id = $_POST['id'] ?? '';
   $nuevo = [];
@@ -790,7 +520,6 @@ if ($accion === 'eliminar') {
           }
         }
       }
-      borrarArchivoSiExiste($r['resultado'] ?? '');
 
       continue;
     }
@@ -808,55 +537,6 @@ if ($accion === 'eliminar') {
     'mensaje' => 'Registro y adjunto eliminados.'
   ]);
 }
-
-    if ($accion === 'subirResultado') {
-      if (!usuarioEsObraSocial() && !usuarioEsLaboratorio()) {
-        throw new Exception('No tiene permisos para realizar esta accion.');
-      }
-      $id = $_POST['id'] ?? '';
-      $encontrado = false;
-      $mensaje = 'Resultado cargado correctamente.';
-
-      foreach ($registros as &$r) {
-        if (($r['id'] ?? '') === $id) {
-          $encontrado = true;
-
-          $resultadoAnterior = $r['resultado'] ?? '';
-          $resultadoNuevo = guardarResultado('archivoResultado', $r['dni'] ?? '', $r['nombre'] ?? '');
-
-          $r['resultado'] = $resultadoNuevo;
-          $r['fechaResultado'] = date('d/m/Y H:i');
-          $email = trim((string)($r['email'] ?? ''));
-          $r['emailEnviado'] = false;
-          $r['fechaEmail'] = '';
-          $r['errorEmail'] = '';
-
-          if ($email !== '') {
-            $envio = enviarEmailResultado($r, $resultadoNuevo);
-            $r['emailEnviado'] = $envio['enviado'];
-            $r['fechaEmail'] = $envio['enviado'] ? date('d/m/Y H:i') : '';
-            $r['errorEmail'] = $envio['error'];
-
-            if (!$envio['enviado']) {
-              $mensaje = 'Resultado cargado, pero no se pudo enviar el email: ' . $envio['error'];
-            }
-          }
-
-          $r['historial'][] = [
-            'fecha' => date('d/m/Y H:i'),
-            'accion' => 'Resultado cargado'
-          ];
-          borrarArchivoSiExiste($resultadoAnterior);
-          break;
-        }
-      }
-      unset($r);
-
-      if (!$encontrado) throw new Exception('Registro no encontrado.');
-
-      guardarRegistros($registros);
-      responderJson(true, ['mensaje' => $mensaje]);
-    }
 
     responderJson(false, ['error' => 'Acción no válida.']);
 
@@ -914,24 +594,6 @@ if ($accion === 'eliminar') {
 
     header p{
       opacity:.95;
-    }
-
-    .header-top{
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
-      gap:16px;
-      flex-wrap:wrap;
-    }
-
-    .logout{
-      color:white;
-      border:1px solid rgba(255,255,255,.7);
-      border-radius:8px;
-      padding:8px 10px;
-      text-decoration:none;
-      font-weight:bold;
-      background:rgba(255,255,255,.12);
     }
 
     .container{
@@ -1249,17 +911,11 @@ if ($accion === 'eliminar') {
 <body>
 
 <header>
-  <div class="header-top">
-    <div>
-      <h1><?= usuarioEsLaboratorio() ? 'Laboratorio - Resultados de analisis' : 'REGISTRO_ANALISIS' ?></h1>
-      <p><?= usuarioEsLaboratorio() ? 'Carga y consulta de resultados' : 'Gestion de analisis, pendientes, adjuntos y resumen' ?></p>
-    </div>
-    <a class="logout" href="?logout=1">Cerrar sesion</a>
-  </div>
+  <h1>REGISTRO_ANALISIS</h1>
+  <p>Gestión de análisis, pendientes, adjuntos y resumen</p>
 </header>
 
 <div class="container">
-<?php if (usuarioEsObraSocial()) { ?>
 
   <div class="tabs">
     <button class="tab-btn active" onclick="abrirTab('buscar', this)">Tabla / Pendientes</button>
@@ -1314,19 +970,16 @@ if ($accion === 'eliminar') {
             <th>Fecha</th>
             <th>Nombre</th>
             <th>DNI</th>
-            <th>Email</th>
             <th>Estado</th>
             <th>Pago</th>
             <th>Monto</th>
             <th>Pedido</th>
-            <th>Resultado</th>
-            <th>Email resultado</th>
             <th>Acción</th>
           </tr>
         </thead>
 
         <tbody id="tablaRegistros">
-          <tr><td colspan="11">Cargando...</td></tr>
+          <tr><td colspan="8">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -1349,11 +1002,6 @@ if ($accion === 'eliminar') {
             <label>DNI</label>
             <input type="text" name="dni" id="dni" autocomplete="off" onblur="buscarAfiliadoPorDni()" oninput="limpiarEstadoAfiliado()">
 <small id="estadoAfiliado" class="muted"></small>
-          </div>
-
-          <div class="campo">
-            <label>Email del paciente</label>
-            <input type="email" name="email" id="email" autocomplete="off">
           </div>
 
           <div class="campo">
@@ -1432,49 +1080,6 @@ if ($accion === 'eliminar') {
       <div id="detalleMeses"></div>
     </div>
   </div>
-
-<?php } else { ?>
-
-  <div class="card">
-    <h2>Laboratorio - Resultados de analisis</h2>
-
-    <div class="grid">
-      <div class="campo">
-        <label>Fecha realizado/envio</label>
-        <input type="date" id="labFecha" value="<?= date('Y-m-d') ?>">
-      </div>
-
-      <div class="campo">
-        <label>Buscar nombre o DNI</label>
-        <input type="text" id="labBuscar" placeholder="Nombre o DNI" oninput="cargarLaboratorio()">
-      </div>
-
-      <div class="campo">
-        <label>&nbsp;</label>
-        <button type="button" onclick="cargarLaboratorio()">Actualizar</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="card tabla-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Fecha realizado/envio</th>
-          <th>Nombre</th>
-          <th>DNI</th>
-          <th>Pedido</th>
-          <th>Resultado</th>
-        </tr>
-      </thead>
-
-      <tbody id="tablaLaboratorio">
-        <tr><td colspan="5">Cargando...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-<?php } ?>
 
 </div>
 
@@ -1633,24 +1238,6 @@ function money(n){
   return '$ ' + Number(n || 0).toLocaleString('es-AR');
 }
 
-function escapeHtml(txt){
-  return String(txt ?? '').replace(/[&<>"']/g, c => ({
-    '&':'&amp;',
-    '<':'&lt;',
-    '>':'&gt;',
-    '"':'&quot;',
-    "'":'&#039;'
-  }[c]));
-}
-
-function escapeJs(txt){
-  return String(txt ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
-
-function emailValido(email){
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
 async function apiGet(params){
   const res = await fetch('index.php?' + params + '&_=' + Date.now(), { cache:'no-store' });
   return await res.json();
@@ -1666,14 +1253,11 @@ async function apiPost(formData){
   return await res.json();
 }
 
-const formCarga = document.getElementById('formCarga');
-if(formCarga){
-formCarga.addEventListener('submit', async function(e){
+document.getElementById('formCarga').addEventListener('submit', async function(e){
   e.preventDefault();
 
   const nombre = document.getElementById('nombre').value.trim();
   const dni = document.getElementById('dni').value.trim();
-  const email = document.getElementById('email').value.trim();
   const pagado = document.getElementById('pagado').value;
   const monto = document.getElementById('monto').value || 0;
   const estado = document.getElementById('estado').value;
@@ -1687,11 +1271,6 @@ formCarga.addEventListener('submit', async function(e){
 
   if(!dni){
     alert('Debe cargar DNI');
-    return;
-  }
-
-  if(email && !emailValido(email)){
-    alert('Email invalido');
     return;
   }
 
@@ -1741,7 +1320,6 @@ formCarga.addEventListener('submit', async function(e){
     mensaje.innerHTML = '❌ ' + (data.error || 'Error al guardar');
   }
 });
-}
 
 async function cargarRegistros(){
   const buscar = document.getElementById('buscarTexto')?.value || '';
@@ -1749,7 +1327,7 @@ async function cargarRegistros(){
   const pago = document.getElementById('buscarPago')?.value || 'Todos';
 
   const tbody = document.getElementById('tablaRegistros');
-  tbody.innerHTML = '<tr><td colspan="11">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8">Cargando...</td></tr>';
 
   const data = await apiGet(
     'api=listar' +
@@ -1761,60 +1339,37 @@ async function cargarRegistros(){
   tbody.innerHTML = '';
 
   if(!data.ok){
-    tbody.innerHTML = `<tr><td colspan="11">${data.error || 'Error al cargar registros'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8">${data.error || 'Error al cargar registros'}</td></tr>`;
     return;
   }
 
   if(!data.registros.length){
-    tbody.innerHTML = `<tr><td colspan="11">No hay registros para este filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8">No hay registros para este filtro.</td></tr>`;
     return;
   }
 
   data.registros.forEach(r=>{
     const adj = r.adjunto || '';
     const ext = adj.split('.').pop().toLowerCase();
-    const adjJs = escapeJs(adj);
-    const idJs = escapeJs(r.id || '');
-    const pagadoJs = escapeJs(r.pagado || '');
 
     const pedidoHtml = adj
       ? `
-        <a class="link-btn" href="${escapeHtml(adj)}" target="_blank">Abrir</a>
-        <button class="light" onclick="verPedido('${adjJs}', '${escapeJs(ext)}')">Ver</button>
-        <a class="link-btn" href="${escapeHtml(adj)}" download>Descargar</a>
+        <a class="link-btn" href="${adj}" target="_blank">Abrir</a>
+        <button class="light" onclick="verPedido('${adj.replace(/'/g, "\\'")}', '${ext}')">Ver</button>
+        <a class="link-btn" href="${adj}" download>Descargar</a>
       `
       : '-';
-
-    const res = r.resultado || '';
-    const resExt = res.split('.').pop().toLowerCase();
-    const resJs = escapeJs(res);
-    const resultadoHtml = res
-      ? `
-        <button class="light" onclick="verPedido('${resJs}', '${escapeJs(resExt)}')">Ver</button>
-        <a class="link-btn" href="${escapeHtml(res)}" download>Descargar</a>
-        <button onclick="subirResultado('${idJs}')">Reemplazar</button>
-      `
-      : `<button onclick="subirResultado('${idJs}')">Cargar resultado</button>`;
-
-    const email = r.email || '';
-    const errorEmail = r.errorEmail || '';
-    const emailResultadoHtml = !email
-      ? 'Sin email'
-      : r.emailEnviado
-        ? 'Enviado'
-        : `<span title="${escapeHtml(errorEmail)}">No enviado</span>`;
 
     const tr = document.createElement('tr');
 
     tr.innerHTML = `
-      <td>${escapeHtml(r.fechaCarga || '')}</td>
-      <td><strong>${escapeHtml(r.nombre || '')}</strong></td>
-      <td>${escapeHtml(r.dni || '')}</td>
-      <td>${email ? escapeHtml(email) : '-'}</td>
+      <td>${r.fechaCarga || ''}</td>
+      <td><strong>${r.nombre || ''}</strong></td>
+      <td>${r.dni || ''}</td>
 
       <td>
         <span class="estado-pill ${r.estado === 'Pendiente' ? 'pendiente' : 'realizado'}">
-          ${escapeHtml(r.estado || '')}
+          ${r.estado || ''}
         </span>
       </td>
 
@@ -1824,30 +1379,26 @@ async function cargarRegistros(){
         </span>
       </td>
 
-      <td>${Number(r.monto) === 0 && r.motivo ? escapeHtml(r.motivo) : money(r.monto)}</td>
+      <td>${Number(r.monto) === 0 && r.motivo ? r.motivo : money(r.monto)}</td>
 
       <td>${pedidoHtml}</td>
-
-      <td>${resultadoHtml}</td>
-
-      <td>${emailResultadoHtml}</td>
 
       <td>
   ${
     r.estado === 'Pendiente'
       ? `
-        <button onclick="marcarRealizado('${idJs}', '${pagadoJs}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'})">
+        <button onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'})">
           Realizar
         </button>
 
-        <button class="danger" onclick="eliminarRegistro('${idJs}')">
+        <button class="danger" onclick="eliminarRegistro('${r.id}')">
           Eliminar
         </button>
       `
       : `
         ✔
 
-        <button class="danger" onclick="eliminarRegistro('${idJs}')">
+        <button class="danger" onclick="eliminarRegistro('${r.id}')">
           Eliminar
         </button>
       `
@@ -1968,102 +1519,6 @@ async function cargarResumen(){
   `).join('');
 }
 
-async function cargarLaboratorio(){
-  const tbody = document.getElementById('tablaLaboratorio');
-  if(!tbody) return;
-
-  const fecha = document.getElementById('labFecha')?.value || '';
-  const buscar = document.getElementById('labBuscar')?.value || '';
-
-  tbody.innerHTML = '<tr><td colspan="5">Cargando...</td></tr>';
-
-  const data = await apiGet(
-    'api=laboratorio' +
-    '&fecha=' + encodeURIComponent(fecha) +
-    '&buscar=' + encodeURIComponent(buscar)
-  );
-
-  tbody.innerHTML = '';
-
-  if(!data.ok){
-    tbody.innerHTML = `<tr><td colspan="5">${data.error || 'Error al cargar registros'}</td></tr>`;
-    return;
-  }
-
-  if(!data.registros.length){
-    tbody.innerHTML = '<tr><td colspan="5">No hay registros realizados para este filtro.</td></tr>';
-    return;
-  }
-
-  data.registros.forEach(r => {
-    const adj = r.adjunto || '';
-    const adjExt = adj.split('.').pop().toLowerCase();
-    const res = r.resultado || '';
-    const resExt = res.split('.').pop().toLowerCase();
-
-    const pedidoHtml = adj
-      ? `
-        <button class="light" onclick="verPedido('${adj.replace(/'/g, "\\'")}', '${adjExt}')">Ver</button>
-        <a class="link-btn" href="${adj}" download>Descargar</a>
-      `
-      : '-';
-
-    const resultadoHtml = res
-      ? `
-        <button class="light" onclick="verPedido('${res.replace(/'/g, "\\'")}', '${resExt}')">Ver</button>
-        <a class="link-btn" href="${res}" download>Descargar</a>
-        <button onclick="subirResultado('${r.id}')">Reemplazar</button>
-      `
-      : `<button onclick="subirResultado('${r.id}')">Subir resultado</button>`;
-
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${r.fechaRealizado || r.fechaCarga || ''}</td>
-      <td><strong>${r.nombre || ''}</strong></td>
-      <td>${r.dni || ''}</td>
-      <td>${pedidoHtml}</td>
-      <td>${resultadoHtml}</td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-async function subirResultado(id){
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.jpg,.jpeg,.png,.pdf';
-
-  input.onchange = async () => {
-    const archivo = input.files[0];
-    if(!archivo){
-      alert('Debe seleccionar un resultado.');
-      return;
-    }
-
-    const fd = new FormData();
-    fd.append('accion', 'subirResultado');
-    fd.append('id', id);
-    fd.append('archivoResultado', archivo);
-
-    const data = await apiPost(fd);
-
-    if(data.ok){
-      if(document.getElementById('tablaLaboratorio')){
-        await cargarLaboratorio();
-      }
-      if(document.getElementById('tablaRegistros')){
-        await cargarRegistros();
-        await cargarResumen();
-      }
-      alert(data.mensaje || 'Resultado cargado correctamente');
-    }else{
-      alert(data.error || 'Error al subir resultado');
-    }
-  };
-
-  input.click();
-}
-
 function verPedido(url, ext){
   const modal = document.getElementById('visorModal');
   const body = document.getElementById('visorBody');
@@ -2094,15 +1549,8 @@ document.getElementById('visorModal').addEventListener('click', function(e){
   if(e.target === this) cerrarVisor();
 });
 
-if(document.getElementById('tablaRegistros')){
-  cargarRegistros();
-  cargarResumen();
-}
-
-if(document.getElementById('tablaLaboratorio')){
-  document.getElementById('labFecha')?.addEventListener('change', cargarLaboratorio);
-  cargarLaboratorio();
-}
+cargarRegistros();
+cargarResumen();
 </script>
 
 </body>
