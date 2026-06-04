@@ -136,6 +136,14 @@ define('ADJUNTOS_DIR', __DIR__ . '/adjuntos');
 define('PENDIENTES_DIR', ADJUNTOS_DIR . '/pendientes');
 define('REALIZADOS_DIR', ADJUNTOS_DIR . '/realizados');
 define('RESULTADOS_DIR', __DIR__ . '/resultados');
+// Requiere PHPMailer en vendor/autoload.php o en phpmailer/src/.
+define('SMTP_HOST', 'pastagl.ferozo.com');
+define('SMTP_PORT', 465);
+define('SMTP_SECURE', 'ssl');
+define('SMTP_USER', 'consultorios@pastelerosmendoza.org');
+define('SMTP_PASS', 'PEGAR_CONTRASENA_SOLO_EN_DONWEB');
+define('SMTP_FROM', 'consultorios@pastelerosmendoza.org');
+define('SMTP_FROM_NAME', 'Consultorios OSP Pasteleros Mendoza');
 
 function asegurarSistema(){
   foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR, RESULTADOS_DIR] as $dir) {
@@ -312,6 +320,137 @@ function eliminarArchivoYCarpetasVacias($rutaRelativa, $limiteDir){
   }
 }
 
+function cargarPHPMailer(){
+  if (class_exists('\\PHPMailer\\PHPMailer\\PHPMailer')) {
+    return true;
+  }
+
+  $autoload = __DIR__ . '/vendor/autoload.php';
+  if (file_exists($autoload)) {
+    require_once $autoload;
+  }
+
+  if (!class_exists('\\PHPMailer\\PHPMailer\\PHPMailer')) {
+    $base = __DIR__ . '/phpmailer/src';
+    $archivos = [
+      $base . '/Exception.php',
+      $base . '/PHPMailer.php',
+      $base . '/SMTP.php'
+    ];
+
+    if (file_exists($archivos[0]) && file_exists($archivos[1]) && file_exists($archivos[2])) {
+      require_once $archivos[0];
+      require_once $archivos[1];
+      require_once $archivos[2];
+    }
+  }
+
+  return class_exists('\\PHPMailer\\PHPMailer\\PHPMailer');
+}
+
+function rutaResultadoAbsoluta($rutaRelativa){
+  $rutaRelativa = str_replace(['../', '..\\'], '', $rutaRelativa);
+  $archivo = __DIR__ . '/' . $rutaRelativa;
+
+  if (!file_exists($archivo) || !is_file($archivo)) {
+    throw new Exception('El archivo de resultado no existe.');
+  }
+
+  return $archivo;
+}
+
+function enviarResultadoPorEmail($registro){
+  $email = limpiarTexto($registro['email'] ?? '');
+  $nombre = limpiarTexto($registro['nombre'] ?? '');
+  $resultado = $registro['resultado'] ?? '';
+
+  if ($email === '') {
+    throw new Exception('Sin email cargado');
+  }
+
+  if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    throw new Exception('Email invÃ¡lido.');
+  }
+
+  if ($resultado === '') {
+    throw new Exception('El registro no tiene resultado cargado.');
+  }
+
+  $archivo = rutaResultadoAbsoluta($resultado);
+
+  if (!cargarPHPMailer()) {
+    throw new Exception('PHPMailer no disponible. Instalar con Composer en vendor/ o subir la carpeta phpmailer/src/.');
+  }
+
+  $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+
+  try {
+    $mail->isSMTP();
+    $mail->Host = SMTP_HOST;
+    $mail->SMTPAuth = true;
+    $mail->Username = SMTP_USER;
+    $mail->Password = SMTP_PASS;
+    $mail->SMTPSecure = SMTP_SECURE;
+    $mail->Port = SMTP_PORT;
+    $mail->CharSet = 'UTF-8';
+
+    $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
+    $mail->addAddress($email, $nombre);
+    $mail->Subject = html_entity_decode('Resultado de an&aacute;lisis - Obra Social Pasteleros', ENT_QUOTES, 'UTF-8');
+    $mail->Body = html_entity_decode(
+      "Estimado/a " . ($nombre ?: 'paciente') . ":\n\n" .
+      "Adjuntamos el resultado de los an&aacute;lisis realizados en nuestros consultorios.\n\n" .
+      "Saludos.\n" .
+      "Obra Social Pasteleros Mendoza",
+      ENT_QUOTES,
+      'UTF-8'
+    );
+    $mail->addAttachment($archivo, basename($archivo));
+    $mail->send();
+  } catch (Throwable $e) {
+    throw new Exception($e->getMessage());
+  }
+}
+
+function actualizarEstadoEmailResultado(&$registro){
+  $email = limpiarTexto($registro['email'] ?? '');
+
+  if ($email === '') {
+    $registro['emailEnviado'] = false;
+    $registro['fechaEmail'] = '';
+    $registro['errorEmail'] = 'Sin email cargado';
+    return [
+      'enviado' => false,
+      'email' => '',
+      'error' => 'Sin email cargado',
+      'mensajeEmail' => 'No se enviÃ³ email porque el paciente no tiene email cargado.'
+    ];
+  }
+
+  try {
+    enviarResultadoPorEmail($registro);
+    $registro['emailEnviado'] = true;
+    $registro['fechaEmail'] = date('d/m/Y H:i');
+    $registro['errorEmail'] = '';
+    return [
+      'enviado' => true,
+      'email' => $email,
+      'error' => '',
+      'mensajeEmail' => 'Email enviado a ' . $email . '.'
+    ];
+  } catch (Throwable $e) {
+    $registro['emailEnviado'] = false;
+    $registro['fechaEmail'] = '';
+    $registro['errorEmail'] = $e->getMessage();
+    return [
+      'enviado' => false,
+      'email' => $email,
+      'error' => $e->getMessage(),
+      'mensajeEmail' => 'No se pudo enviar el email. Motivo: ' . $e->getMessage()
+    ];
+  }
+}
+
 function normalizar($txt){
   $txt = mb_strtolower((string)$txt, 'UTF-8');
   $txt = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $txt);
@@ -471,6 +610,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'adjunto' => $adjunto,
         'resultado' => '',
         'fechaResultado' => '',
+        'emailEnviado' => false,
+        'fechaEmail' => '',
+        'errorEmail' => '',
         'historial' => [[
           'fecha' => date('d/m/Y H:i'),
           'accion' => 'Registro creado'
@@ -550,6 +692,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($accion === 'subirResultado') {
       $id = $_POST['id'] ?? '';
       $encontrado = false;
+      $estadoEmail = null;
 
       foreach ($registros as &$r) {
         if (($r['id'] ?? '') === $id) {
@@ -564,6 +707,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           $r['resultado'] = $resultadoNuevo;
           $r['fechaResultado'] = date('d/m/Y H:i');
+          $estadoEmail = actualizarEstadoEmailResultado($r);
           $r['historial'][] = [
             'fecha' => date('d/m/Y H:i'),
             'accion' => 'Resultado cargado'
@@ -576,7 +720,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       if (!$encontrado) throw new Exception('Registro no encontrado.');
 
       guardarRegistros($registros);
-      responderJson(true, ['mensaje' => 'Resultado guardado correctamente.']);
+      responderJson(true, array_merge([
+        'mensaje' => 'Resultado cargado correctamente.'
+      ], $estadoEmail ?? []));
+    }
+
+    if ($accion === 'reenviarEmail') {
+      $id = $_POST['id'] ?? '';
+      $encontrado = false;
+      $estadoEmail = null;
+
+      foreach ($registros as &$r) {
+        if (($r['id'] ?? '') === $id) {
+          $encontrado = true;
+
+          if (empty($r['resultado'])) {
+            throw new Exception('El registro no tiene resultado cargado.');
+          }
+
+          if (empty($r['email'])) {
+            $r['emailEnviado'] = false;
+            $r['fechaEmail'] = '';
+            $r['errorEmail'] = 'Sin email cargado';
+            $estadoEmail = [
+              'enviado' => false,
+              'email' => '',
+              'error' => 'Sin email cargado',
+              'mensajeEmail' => 'No se enviÃ³ email porque el paciente no tiene email cargado.'
+            ];
+          } else {
+            $estadoEmail = actualizarEstadoEmailResultado($r);
+          }
+
+          $r['historial'][] = [
+            'fecha' => date('d/m/Y H:i'),
+            'accion' => 'ReenvÃ­o de email de resultado'
+          ];
+          break;
+        }
+      }
+      unset($r);
+
+      if (!$encontrado) throw new Exception('Registro no encontrado.');
+
+      guardarRegistros($registros);
+      responderJson(true, array_merge([
+        'mensaje' => 'ReenvÃ­o procesado.'
+      ], $estadoEmail ?? []));
     }
 
 if ($accion === 'eliminar') {
@@ -815,7 +1005,7 @@ if ($accion === 'eliminar') {
     table{
       width:100%;
       border-collapse:collapse;
-      min-width:1420px;
+      min-width:1540px;
     }
 
     th{
@@ -1074,12 +1264,13 @@ if ($accion === 'eliminar') {
             <th>Pedido</th>
             <th>Estado Resultado</th>
             <th>Resultado</th>
+            <th>Estado Email</th>
             <th>Acción</th>
           </tr>
         </thead>
 
         <tbody id="tablaRegistros">
-          <tr><td colspan="11">Cargando...</td></tr>
+          <tr><td colspan="12">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -1343,6 +1534,26 @@ function money(n){
   return '$ ' + Number(n || 0).toLocaleString('es-AR');
 }
 
+function htmlAttr(txt){
+  return String(txt || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function mensajeResultadoEmail(data){
+  if(data.enviado === true){
+    return '✅ Resultado cargado correctamente.\n✅ Email enviado a ' + data.email + '.';
+  }
+
+  if(data.error === 'Sin email cargado'){
+    return '✅ Resultado cargado correctamente.\n⚪ No se enviÃ³ email porque el paciente no tiene email cargado.';
+  }
+
+  return '✅ Resultado cargado correctamente.\n❌ No se pudo enviar el email.\nMotivo: ' + (data.error || 'Error desconocido');
+}
+
 async function apiGet(params){
   const res = await fetch('index.php?' + params + '&_=' + Date.now(), { cache:'no-store' });
   return await res.json();
@@ -1438,7 +1649,7 @@ async function cargarRegistros(){
   const pago = document.getElementById('buscarPago')?.value || 'Todos';
 
   const tbody = document.getElementById('tablaRegistros');
-  tbody.innerHTML = '<tr><td colspan="11">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="12">Cargando...</td></tr>';
 
   const data = await apiGet(
     'api=listar' +
@@ -1450,12 +1661,12 @@ async function cargarRegistros(){
   tbody.innerHTML = '';
 
   if(!data.ok){
-    tbody.innerHTML = `<tr><td colspan="11">${data.error || 'Error al cargar registros'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12">${data.error || 'Error al cargar registros'}</td></tr>`;
     return;
   }
 
   if(!data.registros.length){
-    tbody.innerHTML = `<tr><td colspan="11">No hay registros para este filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12">No hay registros para este filtro.</td></tr>`;
     return;
   }
 
@@ -1477,11 +1688,18 @@ async function cargarRegistros(){
       ? '<span class="estado-pill realizado">🟢 Disponible</span>'
       : '<span class="estado-pill pendiente">🔴 Pendiente</span>';
 
+    const estadoEmailHtml = !r.email
+      ? '<span class="estado-pill">⚪ Sin email</span>'
+      : r.emailEnviado === true
+        ? '<span class="estado-pill realizado">🟢 Enviado</span>'
+        : `<span class="estado-pill pendiente" title="${htmlAttr(r.errorEmail || '')}">🔴 Error</span>`;
+
     const resultadoHtml = resultado
       ? `
         <button class="light" onclick="verArchivo('${resultado.replace(/'/g, "\\'")}', '${extResultado}', 'Resultado')">Ver</button>
         <a class="link-btn" href="${resultado}" download>Descargar</a>
         <button onclick="subirResultado('${r.id}')">Reemplazar</button>
+        ${r.email ? `<button onclick="reenviarEmail('${r.id}')">Reenviar Email</button>` : ''}
       `
       : `<button onclick="subirResultado('${r.id}')">Cargar resultado</button>`;
 
@@ -1512,6 +1730,8 @@ async function cargarRegistros(){
       <td>${estadoResultadoHtml}</td>
 
       <td>${resultadoHtml}</td>
+
+      <td>${estadoEmailHtml}</td>
 
       <td>
   ${
@@ -1620,13 +1840,35 @@ async function subirResultado(id){
 
     if(data.ok){
       await cargarRegistros();
-      alert('Resultado guardado correctamente');
+      alert(mensajeResultadoEmail(data));
     }else{
       alert(data.error || 'Error');
     }
   };
 
   input.click();
+}
+
+async function reenviarEmail(id){
+  const fd = new FormData();
+  fd.append('accion', 'reenviarEmail');
+  fd.append('id', id);
+
+  const data = await apiPost(fd);
+
+  await cargarRegistros();
+
+  if(data.ok){
+    if(data.enviado === true){
+      alert('✅ Email enviado a ' + data.email + '.');
+    }else if(data.error === 'Sin email cargado'){
+      alert('⚪ No se enviÃ³ email porque el paciente no tiene email cargado.');
+    }else{
+      alert('❌ No se pudo enviar el email.\nMotivo: ' + (data.error || 'Error desconocido'));
+    }
+  }else{
+    alert(data.error || 'Error');
+  }
 }
 
 async function eliminarRegistro(id){
