@@ -181,6 +181,10 @@ function limpiarTexto($txt){
   return $txt;
 }
 
+function esPagadoSi($valor){
+  return in_array((string)$valor, ['Sí', "S\u{00C3}\u{00AD}"], true);
+}
+
 function limpiarNombreArchivo($txt){
   $txt = limpiarTexto($txt);
   $txt = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $txt);
@@ -369,7 +373,7 @@ function enviarResultadoPorEmail($registro){
   }
 
   if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-    throw new Exception('Email invÃ¡lido.');
+    throw new Exception('Email inválido.');
   }
 
   if ($resultado === '') {
@@ -396,6 +400,7 @@ function enviarResultadoPorEmail($registro){
 
     $mail->setFrom(SMTP_FROM, SMTP_FROM_NAME);
     $mail->addAddress($email, $nombre);
+    $mail->addBCC('consultorios@pastelerosmendoza.org');
     $mail->Subject = html_entity_decode('Resultado de an&aacute;lisis - Obra Social Pasteleros', ENT_QUOTES, 'UTF-8');
     $mail->Body = html_entity_decode(
       "Estimado/a " . ($nombre ?: 'paciente') . ":\n\n" .
@@ -423,7 +428,7 @@ function actualizarEstadoEmailResultado(&$registro){
       'enviado' => false,
       'email' => '',
       'error' => 'Sin email cargado',
-      'mensajeEmail' => 'No se enviÃ³ email porque el paciente no tiene email cargado.'
+      'mensajeEmail' => 'No se envió email porque el paciente no tiene email cargado.'
     ];
   }
 
@@ -465,8 +470,8 @@ function filtrarRegistros($registros){
   $filtrados = array_filter($registros, function($r) use ($buscar, $estado, $pago){
     if ($estado !== 'Todos' && ($r['estado'] ?? '') !== $estado) return false;
 
-    if ($pago === 'Pagado' && ($r['pagado'] ?? '') !== 'Sí') return false;
-    if ($pago === 'No pagado' && ($r['pagado'] ?? '') === 'Sí') return false;
+    if ($pago === 'Pagado' && !esPagadoSi($r['pagado'] ?? '')) return false;
+    if ($pago === 'No pagado' && esPagadoSi($r['pagado'] ?? '')) return false;
 
     if ($buscar !== '') {
       $texto = normalizar(
@@ -494,6 +499,8 @@ function resumenRegistros($registros){
   $totalRealizados = 0;
   $totalPendientes = 0;
   $totalMonto = 0;
+  $totalResultados = 0;
+  $totalEmailsEnviados = 0;
   $mesActualRealizados = 0;
   $mesActualMonto = 0;
   $mesActual = date('Y-m');
@@ -504,6 +511,14 @@ function resumenRegistros($registros){
     $monto = (float)($r['monto'] ?? 0);
     $fechaISO = $r['fechaISO'] ?? date('Y-m-d');
     $mes = substr($fechaISO, 0, 7);
+
+    if (!empty($r['resultado'])) {
+      $totalResultados++;
+    }
+
+    if (($r['emailEnviado'] ?? false) === true) {
+      $totalEmailsEnviados++;
+    }
 
     if (!isset($meses[$mes])) {
       $meses[$mes] = [
@@ -526,7 +541,7 @@ function resumenRegistros($registros){
       $meses[$mes]['pendientes']++;
     }
 
-    if (($r['pagado'] ?? '') === 'Sí') {
+    if (esPagadoSi($r['pagado'] ?? '')) {
       $totalMonto += $monto;
       $meses[$mes]['monto'] += $monto;
 
@@ -542,6 +557,8 @@ function resumenRegistros($registros){
     'totalRealizados' => $totalRealizados,
     'totalPendientes' => $totalPendientes,
     'totalMonto' => $totalMonto,
+    'totalResultados' => $totalResultados,
+    'totalEmailsEnviados' => $totalEmailsEnviados,
     'mesActualRealizados' => $mesActualRealizados,
     'mesActualMonto' => $mesActualMonto,
     'meses' => array_values($meses)
@@ -584,8 +601,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       if ($nombre === '') throw new Exception('Debe cargar nombre y apellido.');
       if ($dni === '') throw new Exception('Debe cargar DNI.');
-      if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new Exception('Email invÃ¡lido.');
-      if ($pagado === 'Sí' && $monto < 0) throw new Exception('Monto inválido.');
+      if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new Exception('Email inválido.');
+      if (esPagadoSi($pagado) && $monto < 0) throw new Exception('Monto inválido.');
       if (!in_array($estado, ['Pendiente', 'Realizado'], true)) $estado = 'Pendiente';
 
       $adjunto = guardarAdjunto('archivo', $estado, $dni, $nombre);
@@ -606,7 +623,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'estado' => $estado,
         'motivo' => $_POST['motivo'] ?? '',
         'pagado' => $pagado,
-        'monto' => $pagado === 'Sí' ? $monto : 0,
+        'monto' => esPagadoSi($pagado) ? $monto : 0,
         'adjunto' => $adjunto,
         'resultado' => '',
         'fechaResultado' => '',
@@ -672,8 +689,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       foreach ($registros as &$r) {
         if (($r['id'] ?? '') === $id) {
           $encontrado = true;
-          $r['pagado'] = $pagado === 'Sí' ? 'Sí' : 'No';
-          $r['monto'] = $r['pagado'] === 'Sí' ? $monto : 0;
+          $r['pagado'] = esPagadoSi($pagado) ? 'Sí' : 'No';
+          $r['monto'] = esPagadoSi($r['pagado']) ? $monto : 0;
           $r['historial'][] = [
             'fecha' => date('d/m/Y H:i'),
             'accion' => 'Pago actualizado'
@@ -746,7 +763,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               'enviado' => false,
               'email' => '',
               'error' => 'Sin email cargado',
-              'mensajeEmail' => 'No se enviÃ³ email porque el paciente no tiene email cargado.'
+              'mensajeEmail' => 'No se envió email porque el paciente no tiene email cargado.'
             ];
           } else {
             $estadoEmail = actualizarEstadoEmailResultado($r);
@@ -754,7 +771,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           $r['historial'][] = [
             'fecha' => date('d/m/Y H:i'),
-            'accion' => 'ReenvÃ­o de email de resultado'
+            'accion' => 'Reenvío de email de resultado'
           ];
           break;
         }
@@ -765,7 +782,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
       guardarRegistros($registros);
       responderJson(true, array_merge([
-        'mensaje' => 'ReenvÃ­o procesado.'
+        'mensaje' => 'Reenvío procesado.'
       ], $estadoEmail ?? []));
     }
 
@@ -1254,7 +1271,6 @@ if ($accion === 'eliminar') {
       <table>
         <thead>
           <tr>
-            <th>Fecha</th>
             <th>Nombre</th>
             <th>DNI</th>
             <th>Email</th>
@@ -1265,6 +1281,7 @@ if ($accion === 'eliminar') {
             <th>Estado Resultado</th>
             <th>Resultado</th>
             <th>Estado Email</th>
+            <th>Fecha Email</th>
             <th>Acción</th>
           </tr>
         </thead>
@@ -1368,6 +1385,16 @@ if ($accion === 'eliminar') {
       <div class="mini-card">
         <h3>Mes actual</h3>
         <p id="rMes">0</p>
+      </div>
+
+      <div class="mini-card">
+        <h3>Resultados cargados</h3>
+        <p id="rResultados">0</p>
+      </div>
+
+      <div class="mini-card">
+        <h3>Emails enviados</h3>
+        <p id="rEmails">0</p>
       </div>
     </div>
 
@@ -1489,7 +1516,7 @@ function toggleMonto(){
   const monto = document.getElementById('monto');
   const campoMotivo = document.getElementById('campoMotivo');
 
-  if(pagado === 'Sí'){
+  if(esPagadoSiJs(pagado)){
     monto.disabled = false;
 
     if(Number(monto.value) === 0){
@@ -1534,6 +1561,10 @@ function money(n){
   return '$ ' + Number(n || 0).toLocaleString('es-AR');
 }
 
+function esPagadoSiJs(valor){
+  return ['Sí', 'S\u00c3\u00ad'].includes(String(valor || ''));
+}
+
 function htmlAttr(txt){
   return String(txt || '')
     .replace(/&/g, '&amp;')
@@ -1548,7 +1579,7 @@ function mensajeResultadoEmail(data){
   }
 
   if(data.error === 'Sin email cargado'){
-    return '✅ Resultado cargado correctamente.\n⚪ No se enviÃ³ email porque el paciente no tiene email cargado.';
+    return '✅ Resultado cargado correctamente.\n⚪ No se envió email porque el paciente no tiene email cargado.';
   }
 
   return '✅ Resultado cargado correctamente.\n❌ No se pudo enviar el email.\nMotivo: ' + (data.error || 'Error desconocido');
@@ -1592,16 +1623,16 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
   }
 
   if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-    alert('Email invÃ¡lido');
+    alert('Email inválido');
     return;
   }
 
-  if(pagado === 'Sí' && Number(monto) < 0){
+  if(esPagadoSiJs(pagado) && Number(monto) < 0){
   alert('Monto inválido');
   return;
 }
 
-  if(pagado === 'Sí' && Number(monto) === 0 && !document.getElementById('motivo').value){
+  if(esPagadoSiJs(pagado) && Number(monto) === 0 && !document.getElementById('motivo').value){
   alert('Debe seleccionar el motivo');
   return;
 }
@@ -1706,7 +1737,6 @@ async function cargarRegistros(){
     const tr = document.createElement('tr');
 
     tr.innerHTML = `
-      <td>${r.fechaCarga || ''}</td>
       <td><strong>${r.nombre || ''}</strong></td>
       <td>${r.dni || ''}</td>
       <td>${r.email || '-'}</td>
@@ -1718,8 +1748,8 @@ async function cargarRegistros(){
       </td>
 
       <td>
-        <span class="pago-pill ${r.pagado === 'Sí' ? 'pagado' : 'nopagado'}">
-          ${r.pagado === 'Sí' ? 'Pagado' : 'No pagado'}
+        <span class="pago-pill ${esPagadoSiJs(r.pagado) ? 'pagado' : 'nopagado'}">
+          ${esPagadoSiJs(r.pagado) ? 'Pagado' : 'No pagado'}
         </span>
       </td>
 
@@ -1732,6 +1762,8 @@ async function cargarRegistros(){
       <td>${resultadoHtml}</td>
 
       <td>${estadoEmailHtml}</td>
+
+      <td>${r.fechaEmail || '-'}</td>
 
       <td>
   ${
@@ -1763,7 +1795,7 @@ async function cargarRegistros(){
 async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
   let monto = montoActual;
 
-  if(pagado !== 'Sí' || (Number(montoActual) === 0 && !motivo)){
+  if(!esPagadoSiJs(pagado) || (Number(montoActual) === 0 && !motivo)){
     monto = prompt('Ingrese el monto pagado');
 
     if(monto === null || monto === '' || Number(monto) < 0){
@@ -1862,7 +1894,7 @@ async function reenviarEmail(id){
     if(data.enviado === true){
       alert('✅ Email enviado a ' + data.email + '.');
     }else if(data.error === 'Sin email cargado'){
-      alert('⚪ No se enviÃ³ email porque el paciente no tiene email cargado.');
+      alert('⚪ No se envió email porque el paciente no tiene email cargado.');
     }else{
       alert('❌ No se pudo enviar el email.\nMotivo: ' + (data.error || 'Error desconocido'));
     }
@@ -1873,7 +1905,7 @@ async function reenviarEmail(id){
 
 async function eliminarRegistro(id){
 
-  if(!confirm('¿Eliminar registro y adjunto?')){
+  if(!confirm('¿Eliminar registro, adjunto y resultado?')){
     return;
   }
 
@@ -1901,6 +1933,8 @@ async function cargarResumen(){
   document.getElementById('rRealizados').innerText = data.totalRealizados;
   document.getElementById('rPendientes').innerText = data.totalPendientes;
   document.getElementById('rMonto').innerText = money(data.totalMonto);
+  document.getElementById('rResultados').innerText = data.totalResultados || 0;
+  document.getElementById('rEmails').innerText = data.totalEmailsEnviados || 0;
   document.getElementById('rMes').innerText =
     data.mesActualRealizados +
     ' / ' +
