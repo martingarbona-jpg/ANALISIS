@@ -135,9 +135,10 @@ define('DATA_FILE', __DIR__ . '/registros.json');
 define('ADJUNTOS_DIR', __DIR__ . '/adjuntos');
 define('PENDIENTES_DIR', ADJUNTOS_DIR . '/pendientes');
 define('REALIZADOS_DIR', ADJUNTOS_DIR . '/realizados');
+define('RESULTADOS_DIR', __DIR__ . '/resultados');
 
 function asegurarSistema(){
-  foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR] as $dir) {
+  foreach ([ADJUNTOS_DIR, PENDIENTES_DIR, REALIZADOS_DIR, RESULTADOS_DIR] as $dir) {
     if (!is_dir($dir)) {
       mkdir($dir, 0755, true);
     }
@@ -251,6 +252,64 @@ function moverAdjuntoARealizados($rutaRelativa, $dni, $nombre){
   }
 
   return rutaWeb($destino);
+}
+
+function guardarResultado($campo, $dni, $nombre){
+  if (!isset($_FILES[$campo]) || $_FILES[$campo]['error'] === UPLOAD_ERR_NO_FILE) {
+    throw new Exception('Debe seleccionar un resultado.');
+  }
+
+  if ($_FILES[$campo]['error'] !== UPLOAD_ERR_OK) {
+    throw new Exception('No se pudo subir el resultado.');
+  }
+
+  $permitidos = ['pdf', 'jpg', 'jpeg', 'png'];
+  $original = $_FILES[$campo]['name'];
+  $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+
+  if (!in_array($ext, $permitidos, true)) {
+    throw new Exception('Resultado no permitido. Solo PDF, JPG, JPEG o PNG.');
+  }
+
+  $persona = limpiarNombreArchivo($nombre . ' - DNI ' . $dni);
+  $destDir = RESULTADOS_DIR . '/' . date('Y-m') . '/' . $persona;
+
+  if (!is_dir($destDir)) {
+    mkdir($destDir, 0755, true);
+  }
+
+  $destino = $destDir . '/resultado.' . $ext;
+
+  if (!move_uploaded_file($_FILES[$campo]['tmp_name'], $destino)) {
+    throw new Exception('No se pudo guardar el resultado en el hosting.');
+  }
+
+  return rutaWeb($destino);
+}
+
+function eliminarArchivoYCarpetasVacias($rutaRelativa, $limiteDir){
+  if (!$rutaRelativa) return;
+
+  $rutaRelativa = str_replace(['../', '..\\'], '', $rutaRelativa);
+  $archivo = __DIR__ . '/' . $rutaRelativa;
+
+  if (file_exists($archivo) && is_file($archivo)) {
+    @unlink($archivo);
+  }
+
+  $dir = dirname($archivo);
+  $limite = realpath($limiteDir);
+
+  while ($dir && is_dir($dir) && realpath($dir) !== $limite) {
+    $restantes = array_diff(scandir($dir), ['.', '..']);
+
+    if (count($restantes) === 0) {
+      @rmdir($dir);
+      $dir = dirname($dir);
+    } else {
+      break;
+    }
+  }
 }
 
 function normalizar($txt){
@@ -379,12 +438,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($accion === 'crear') {
       $nombre = limpiarTexto($_POST['nombre'] ?? '');
       $dni = limpiarTexto($_POST['dni'] ?? '');
+      $email = limpiarTexto($_POST['email'] ?? '');
       $pagado = $_POST['pagado'] ?? 'No';
       $estado = $_POST['estado'] ?? 'Pendiente';
       $monto = (float)($_POST['monto'] ?? 0);
 
       if ($nombre === '') throw new Exception('Debe cargar nombre y apellido.');
       if ($dni === '') throw new Exception('Debe cargar DNI.');
+      if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new Exception('Email invÃ¡lido.');
       if ($pagado === 'Sí' && $monto < 0) throw new Exception('Monto inválido.');
       if (!in_array($estado, ['Pendiente', 'Realizado'], true)) $estado = 'Pendiente';
 
@@ -402,11 +463,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'fechaCarga' => date('d/m/Y H:i'),
         'nombre' => $nombre,
         'dni' => $dni,
+        'email' => $email,
         'estado' => $estado,
         'motivo' => $_POST['motivo'] ?? '',
         'pagado' => $pagado,
         'monto' => $pagado === 'Sí' ? $monto : 0,
         'adjunto' => $adjunto,
+        'resultado' => '',
+        'fechaResultado' => '',
         'historial' => [[
           'fecha' => date('d/m/Y H:i'),
           'accion' => 'Registro creado'
@@ -483,6 +547,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       responderJson(true, ['mensaje' => 'Pago actualizado.']);
     }
 
+    if ($accion === 'subirResultado') {
+      $id = $_POST['id'] ?? '';
+      $encontrado = false;
+
+      foreach ($registros as &$r) {
+        if (($r['id'] ?? '') === $id) {
+          $encontrado = true;
+
+          $resultadoAnterior = $r['resultado'] ?? '';
+          $resultadoNuevo = guardarResultado('resultado', $r['dni'] ?? '', $r['nombre'] ?? '');
+
+          if ($resultadoAnterior !== '' && $resultadoAnterior !== $resultadoNuevo) {
+            eliminarArchivoYCarpetasVacias($resultadoAnterior, RESULTADOS_DIR);
+          }
+
+          $r['resultado'] = $resultadoNuevo;
+          $r['fechaResultado'] = date('d/m/Y H:i');
+          $r['historial'][] = [
+            'fecha' => date('d/m/Y H:i'),
+            'accion' => 'Resultado cargado'
+          ];
+          break;
+        }
+      }
+      unset($r);
+
+      if (!$encontrado) throw new Exception('Registro no encontrado.');
+
+      guardarRegistros($registros);
+      responderJson(true, ['mensaje' => 'Resultado guardado correctamente.']);
+    }
+
 if ($accion === 'eliminar') {
 
   $id = $_POST['id'] ?? '';
@@ -494,6 +590,7 @@ if ($accion === 'eliminar') {
     if (($r['id'] ?? '') === $id) {
 
       $encontrado = true;
+      eliminarArchivoYCarpetasVacias($r['resultado'] ?? '', RESULTADOS_DIR);
 
       if (!empty($r['adjunto'])) {
 
@@ -534,7 +631,7 @@ if ($accion === 'eliminar') {
   guardarRegistros($nuevo);
 
   responderJson(true, [
-    'mensaje' => 'Registro y adjunto eliminados.'
+    'mensaje' => 'Registro, adjunto y resultado eliminados.'
   ]);
 }
 
@@ -718,7 +815,7 @@ if ($accion === 'eliminar') {
     table{
       width:100%;
       border-collapse:collapse;
-      min-width:1120px;
+      min-width:1420px;
     }
 
     th{
@@ -970,16 +1067,19 @@ if ($accion === 'eliminar') {
             <th>Fecha</th>
             <th>Nombre</th>
             <th>DNI</th>
+            <th>Email</th>
             <th>Estado</th>
             <th>Pago</th>
             <th>Monto</th>
             <th>Pedido</th>
+            <th>Estado Resultado</th>
+            <th>Resultado</th>
             <th>Acción</th>
           </tr>
         </thead>
 
         <tbody id="tablaRegistros">
-          <tr><td colspan="8">Cargando...</td></tr>
+          <tr><td colspan="11">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -1002,6 +1102,11 @@ if ($accion === 'eliminar') {
             <label>DNI</label>
             <input type="text" name="dni" id="dni" autocomplete="off" onblur="buscarAfiliadoPorDni()" oninput="limpiarEstadoAfiliado()">
 <small id="estadoAfiliado" class="muted"></small>
+          </div>
+
+          <div class="campo">
+            <label>Email del paciente</label>
+            <input type="email" name="email" id="email" autocomplete="off">
           </div>
 
           <div class="campo">
@@ -1258,6 +1363,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
 
   const nombre = document.getElementById('nombre').value.trim();
   const dni = document.getElementById('dni').value.trim();
+  const email = document.getElementById('email').value.trim();
   const pagado = document.getElementById('pagado').value;
   const monto = document.getElementById('monto').value || 0;
   const estado = document.getElementById('estado').value;
@@ -1271,6 +1377,11 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
 
   if(!dni){
     alert('Debe cargar DNI');
+    return;
+  }
+
+  if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    alert('Email invÃ¡lido');
     return;
   }
 
@@ -1327,7 +1438,7 @@ async function cargarRegistros(){
   const pago = document.getElementById('buscarPago')?.value || 'Todos';
 
   const tbody = document.getElementById('tablaRegistros');
-  tbody.innerHTML = '<tr><td colspan="8">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11">Cargando...</td></tr>';
 
   const data = await apiGet(
     'api=listar' +
@@ -1339,26 +1450,40 @@ async function cargarRegistros(){
   tbody.innerHTML = '';
 
   if(!data.ok){
-    tbody.innerHTML = `<tr><td colspan="8">${data.error || 'Error al cargar registros'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11">${data.error || 'Error al cargar registros'}</td></tr>`;
     return;
   }
 
   if(!data.registros.length){
-    tbody.innerHTML = `<tr><td colspan="8">No hay registros para este filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11">No hay registros para este filtro.</td></tr>`;
     return;
   }
 
   data.registros.forEach(r=>{
     const adj = r.adjunto || '';
     const ext = adj.split('.').pop().toLowerCase();
+    const resultado = r.resultado || '';
+    const extResultado = resultado.split('.').pop().toLowerCase();
 
     const pedidoHtml = adj
       ? `
         <a class="link-btn" href="${adj}" target="_blank">Abrir</a>
-        <button class="light" onclick="verPedido('${adj.replace(/'/g, "\\'")}', '${ext}')">Ver</button>
+        <button class="light" onclick="verArchivo('${adj.replace(/'/g, "\\'")}', '${ext}', 'Pedido')">Ver</button>
         <a class="link-btn" href="${adj}" download>Descargar</a>
       `
       : '-';
+
+    const estadoResultadoHtml = resultado
+      ? '<span class="estado-pill realizado">🟢 Disponible</span>'
+      : '<span class="estado-pill pendiente">🔴 Pendiente</span>';
+
+    const resultadoHtml = resultado
+      ? `
+        <button class="light" onclick="verArchivo('${resultado.replace(/'/g, "\\'")}', '${extResultado}', 'Resultado')">Ver</button>
+        <a class="link-btn" href="${resultado}" download>Descargar</a>
+        <button onclick="subirResultado('${r.id}')">Reemplazar</button>
+      `
+      : `<button onclick="subirResultado('${r.id}')">Cargar resultado</button>`;
 
     const tr = document.createElement('tr');
 
@@ -1366,6 +1491,7 @@ async function cargarRegistros(){
       <td>${r.fechaCarga || ''}</td>
       <td><strong>${r.nombre || ''}</strong></td>
       <td>${r.dni || ''}</td>
+      <td>${r.email || '-'}</td>
 
       <td>
         <span class="estado-pill ${r.estado === 'Pendiente' ? 'pendiente' : 'realizado'}">
@@ -1382,6 +1508,10 @@ async function cargarRegistros(){
       <td>${Number(r.monto) === 0 && r.motivo ? r.motivo : money(r.monto)}</td>
 
       <td>${pedidoHtml}</td>
+
+      <td>${estadoResultadoHtml}</td>
+
+      <td>${resultadoHtml}</td>
 
       <td>
   ${
@@ -1467,6 +1597,38 @@ async function marcarRealizado(id, pagado, montoActual, tieneAdjunto){
     alert(data.error || 'Error');
   }
 }
+
+async function subirResultado(id){
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.jpg,.jpeg,.png,.pdf';
+
+  input.onchange = async () => {
+    const archivo = input.files[0];
+
+    if(!archivo){
+      alert('Debe seleccionar un resultado');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('accion', 'subirResultado');
+    fd.append('id', id);
+    fd.append('resultado', archivo);
+
+    const data = await apiPost(fd);
+
+    if(data.ok){
+      await cargarRegistros();
+      alert('Resultado guardado correctamente');
+    }else{
+      alert(data.error || 'Error');
+    }
+  };
+
+  input.click();
+}
+
 async function eliminarRegistro(id){
 
   if(!confirm('¿Eliminar registro y adjunto?')){
@@ -1519,11 +1681,13 @@ async function cargarResumen(){
   `).join('');
 }
 
-function verPedido(url, ext){
+function verArchivo(url, ext, titulo){
   const modal = document.getElementById('visorModal');
   const body = document.getElementById('visorBody');
   const descargar = document.getElementById('visorDescargar');
+  const visorTitulo = document.getElementById('visorTitulo');
 
+  visorTitulo.innerText = titulo || 'Archivo';
   descargar.href = url;
   body.innerHTML = '';
 
@@ -1538,6 +1702,10 @@ function verPedido(url, ext){
   }
 
   modal.classList.add('active');
+}
+
+function verPedido(url, ext){
+  verArchivo(url, ext, 'Pedido');
 }
 
 function cerrarVisor(){
