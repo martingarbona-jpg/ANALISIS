@@ -1070,6 +1070,24 @@ if ($accion === 'eliminar') {
 
     .tabla-wrap{
       overflow-x:auto;
+      overflow-y:auto;
+      max-height:70vh;
+      border:1px solid var(--borde);
+      border-radius:10px;
+    }
+
+    .scroll-top{
+      overflow-x:auto;
+      overflow-y:hidden;
+      height:16px;
+      margin-bottom:8px;
+      border:1px solid var(--borde);
+      border-radius:8px;
+      background:#f9fafb;
+    }
+
+    .scroll-top-inner{
+      height:1px;
     }
 
     table{
@@ -1085,7 +1103,7 @@ if ($accion === 'eliminar') {
       text-align:left;
       position:sticky;
       top:0;
-      z-index:1;
+      z-index:5;
     }
 
     td{
@@ -1186,6 +1204,44 @@ if ($accion === 'eliminar') {
       margin:2px;
       border:1px solid #cfe8db;
       white-space:nowrap;
+    }
+
+    .btn-mini,
+    .archivos-cell .link-btn,
+    .archivos-cell button,
+    .acciones-cell button{
+      padding:6px 8px;
+      border-radius:7px;
+      font-size:12px;
+      line-height:1.1;
+      margin:2px;
+    }
+
+    .archivos-cell,
+    .acciones-cell{
+      display:flex;
+      flex-wrap:wrap;
+      gap:4px;
+      align-items:center;
+      min-width:130px;
+    }
+
+    .monto-cell{
+      white-space:nowrap;
+      min-width:95px;
+      text-align:right;
+      font-weight:bold;
+    }
+
+    .motivo-pill{
+      display:inline-flex;
+      white-space:nowrap;
+      padding:5px 8px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:bold;
+      background:#fef3c7;
+      color:#92400e;
     }
 
     .modal{
@@ -1331,7 +1387,11 @@ if ($accion === 'eliminar') {
       </p>
     </div>
 
-    <div class="card tabla-wrap">
+    <div class="scroll-top" id="scrollTop">
+      <div class="scroll-top-inner" id="scrollTopInner"></div>
+    </div>
+
+    <div class="card tabla-wrap" id="tablaWrap">
       <table>
         <thead>
           <tr>
@@ -1684,6 +1744,37 @@ function money(n){
   return '$ ' + Number(n || 0).toLocaleString('es-AR');
 }
 
+function ajustarScrollTabla(){
+  const tablaWrap = document.getElementById('tablaWrap');
+  const scrollTop = document.getElementById('scrollTop');
+  const scrollTopInner = document.getElementById('scrollTopInner');
+  const tabla = tablaWrap?.querySelector('table');
+
+  if(!tablaWrap || !scrollTop || !scrollTopInner || !tabla) return;
+
+  scrollTopInner.style.width = tabla.scrollWidth + 'px';
+  scrollTop.scrollLeft = tablaWrap.scrollLeft;
+}
+
+function iniciarScrollTabla(){
+  const tablaWrap = document.getElementById('tablaWrap');
+  const scrollTop = document.getElementById('scrollTop');
+
+  if(!tablaWrap || !scrollTop || tablaWrap.dataset.scrollSync === 'ok') return;
+
+  tablaWrap.dataset.scrollSync = 'ok';
+
+  scrollTop.addEventListener('scroll', () => {
+    tablaWrap.scrollLeft = scrollTop.scrollLeft;
+  });
+
+  tablaWrap.addEventListener('scroll', () => {
+    scrollTop.scrollLeft = tablaWrap.scrollLeft;
+  });
+
+  window.addEventListener('resize', ajustarScrollTabla);
+}
+
 function esPagadoSiJs(valor){
   return ['Sí', 'S\u00c3\u00ad'].includes(String(valor || ''));
 }
@@ -1841,9 +1932,9 @@ async function cargarRegistros(){
 
     const pedidoHtml = adj
       ? `
-        <a class="link-btn" href="${adj}" target="_blank">Abrir</a>
-        <button class="light" onclick="verArchivo('${adj.replace(/'/g, "\\'")}', '${ext}', 'Pedido')">Ver</button>
-        <a class="link-btn" href="${adj}" download>Descargar</a>
+        <a class="link-btn btn-mini" href="${adj}" target="_blank">Abrir</a>
+        <button class="light btn-mini" onclick="verArchivo('${adj.replace(/'/g, "\\'")}', '${ext}', 'Pedido')">Ver</button>
+        <a class="link-btn btn-mini" href="${adj}" download>Descargar</a>
       `
       : '-';
 
@@ -1859,12 +1950,16 @@ async function cargarRegistros(){
 
     const resultadoHtml = resultado
       ? `
-        <button class="light" onclick="verArchivo('${resultado.replace(/'/g, "\\'")}', '${extResultado}', 'Resultado')">Ver</button>
-        <a class="link-btn" href="${resultado}" download>Descargar</a>
-        <button onclick="subirResultado('${r.id}')">Reemplazar</button>
-        ${r.email ? `<button onclick="reenviarEmail('${r.id}')">Reenviar Email</button>` : ''}
+        <button class="light btn-mini" onclick="verArchivo('${resultado.replace(/'/g, "\\'")}', '${extResultado}', 'Resultado')">Ver</button>
+        <a class="link-btn btn-mini" href="${resultado}" download>Descargar</a>
+        <button class="btn-mini" onclick="subirResultado('${r.id}')">Reemplazar</button>
+        ${r.email ? `<button class="btn-mini" onclick="reenviarEmail('${r.id}')">Reenviar Email</button>` : ''}
       `
-      : `<button onclick="subirResultado('${r.id}')">Cargar resultado</button>`;
+      : `<button class="btn-mini" onclick="subirResultado('${r.id}')">Cargar resultado</button>`;
+
+    const montoHtml = Number(r.monto) === 0 && r.motivo
+      ? `<span class="motivo-pill">${r.motivo}</span>`
+      : money(r.monto);
 
     const tr = document.createElement('tr');
 
@@ -1885,51 +1980,54 @@ async function cargarRegistros(){
         </span>
       </td>
 
-      <td>${Number(r.monto) === 0 && r.motivo ? r.motivo : money(r.monto)}</td>
+      <td class="monto-cell">${montoHtml}</td>
 
-      <td>${pedidoHtml}</td>
+      <td><div class="archivos-cell">${pedidoHtml}</div></td>
 
       <td>${estadoResultadoHtml}</td>
 
-      <td>${resultadoHtml}</td>
+      <td><div class="archivos-cell">${resultadoHtml}</div></td>
 
       <td>${estadoEmailHtml}</td>
 
       <td>${r.fechaEmail || '-'}</td>
 
-      <td>
+      <td><div class="acciones-cell">
   ${
     r.estado === 'Pendiente'
       ? `
-        <button onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'}, '${(r.motivo || '').replace(/'/g, "\\'")}')">
+        <button class="btn-mini" onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'}, '${(r.motivo || '').replace(/'/g, "\\'")}')">
           Realizar
         </button>
 
-        <button class="light" onclick="abrirEditar('${r.id}')">
+        <button class="light btn-mini" onclick="abrirEditar('${r.id}')">
           Editar
         </button>
 
-        <button class="danger" onclick="eliminarRegistro('${r.id}')">
+        <button class="danger btn-mini" onclick="eliminarRegistro('${r.id}')">
           Eliminar
         </button>
       `
       : `
         ✔
 
-        <button class="light" onclick="abrirEditar('${r.id}')">
+        <button class="light btn-mini" onclick="abrirEditar('${r.id}')">
           Editar
         </button>
 
-        <button class="danger" onclick="eliminarRegistro('${r.id}')">
+        <button class="danger btn-mini" onclick="eliminarRegistro('${r.id}')">
           Eliminar
         </button>
       `
   }
-</td>
+</div></td>
     `;
 
     tbody.appendChild(tr);
   });
+
+  iniciarScrollTabla();
+  ajustarScrollTabla();
 }
 
 async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
