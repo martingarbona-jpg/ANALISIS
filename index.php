@@ -182,7 +182,12 @@ function limpiarTexto($txt){
 }
 
 function esPagadoSi($valor){
-  return in_array((string)$valor, ['SÃ­', "S\u{00C3}\u{00AD}"], true);
+  $valor = trim((string)$valor);
+  $valor = function_exists('mb_strtolower')
+    ? mb_strtolower($valor, 'UTF-8')
+    : strtolower($valor);
+  $valor = str_replace(['í', 'Ã­', 'ã­'], 'i', $valor);
+  return $valor === 'si';
 }
 
 function limpiarNombreArchivo($txt){
