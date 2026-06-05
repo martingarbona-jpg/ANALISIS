@@ -95,7 +95,7 @@ button{
     <input
       type="password"
       name="login_password"
-      placeholder="ContraseÃ±a"
+      placeholder="Contraseña"
       required
     >
 
@@ -1416,14 +1416,14 @@ if ($accion === 'eliminar') {
 
 <header>
   <h1>REGISTRO_ANALISIS</h1>
-  <p>GestiÃ³n de anÃ¡lisis, pendientes, adjuntos y resumen</p>
+  <p>Gestión de análisis, pendientes, adjuntos y resumen</p>
 </header>
 
 <div class="container">
 
   <div class="tabs">
     <button class="tab-btn active" onclick="abrirTab('buscar', this)">Tabla / Pendientes</button>
-    <button class="tab-btn" onclick="abrirTab('carga', this)">Cargar anÃ¡lisis</button>
+    <button class="tab-btn" onclick="abrirTab('carga', this)">Cargar análisis</button>
     <button class="tab-btn" onclick="abrirTab('resumen', this)">Resumen</button>
   </div>
 
@@ -1440,7 +1440,7 @@ if ($accion === 'eliminar') {
       <div class="grid">
         <div class="campo">
           <label>Buscar nombre, DNI o fecha</label>
-          <input type="text" id="buscarTexto" oninput="cargarRegistros()" placeholder="Ej: PÃ©rez, 33444843, 27/05">
+          <input type="text" id="buscarTexto" oninput="cargarRegistros()" placeholder="Ej: Pérez, 33444843, 27/05">
         </div>
 
         <div class="campo">
@@ -1463,7 +1463,7 @@ if ($accion === 'eliminar') {
       </div>
 
       <p class="muted" style="margin-top:12px;">
-        La tabla se carga automÃ¡ticamente. No hace falta buscar por DNI para ver registros.
+        La tabla se carga automáticamente. No hace falta buscar por DNI para ver registros.
       </p>
     </div>
 
@@ -1475,13 +1475,13 @@ if ($accion === 'eliminar') {
       <table>
         <thead>
           <tr>
+            <th>Fecha</th>
             <th>Nombre</th>
             <th>DNI</th>
-            <th>Email</th>
             <th>Pago</th>
             <th>Pedido</th>
             <th>Resultado</th>
-            <th>AcciÃ³n</th>
+            <th>Acción</th>
           </tr>
         </thead>
 
@@ -1520,7 +1520,7 @@ if ($accion === 'eliminar') {
             <label>Pagado</label>
             <select name="pagado" id="pagado" onchange="toggleMonto()">
               <option>No</option>
-              <option>SÃ­</option>
+              <option value="SÃ­">Sí</option>
             </select>
           </div>
 
@@ -1534,9 +1534,9 @@ if ($accion === 'eliminar') {
   <select name="motivo" id="motivo">
     <option value="">Seleccionar</option>
     <option value="PMI">PMI</option>
-    <option value="ONCOLOGICO">ONCOLÃ“GICO</option>
+    <option value="ONCOLOGICO">ONCOLÓGICO</option>
     <option value="DISCAPACIDAD">DISCAPACIDAD</option>
-    <option value="EXCEPCION">EXCEPCIÃ“N</option>
+    <option value="EXCEPCION">EXCEPCIÓN</option>
   </select>
 </div>
 
@@ -1556,7 +1556,7 @@ if ($accion === 'eliminar') {
 
         <div class="acciones">
           <button type="submit">Guardar registro</button>
-          <span class="muted">Si lo cargÃ¡s como realizado, el pedido es obligatorio.</span>
+          <span class="muted">Si lo cargás como realizado, el pedido es obligatorio.</span>
         </div>
 
         <div class="mensaje" id="mensaje"></div>
@@ -1644,7 +1644,7 @@ if ($accion === 'eliminar') {
             <label>Pagado</label>
             <select name="pagado" id="editarPagado" onchange="toggleEditarMonto()">
               <option>No</option>
-              <option>SÃ­</option>
+              <option value="SÃ­">Sí</option>
             </select>
           </div>
 
@@ -1658,9 +1658,9 @@ if ($accion === 'eliminar') {
             <select name="motivo" id="editarMotivo">
               <option value="">Seleccionar</option>
               <option value="PMI">PMI</option>
-              <option value="ONCOLOGICO">ONCOLÃ“GICO</option>
+              <option value="ONCOLOGICO">ONCOLÓGICO</option>
               <option value="DISCAPACIDAD">DISCAPACIDAD</option>
-              <option value="EXCEPCION">EXCEPCIÃ“N</option>
+              <option value="EXCEPCION">EXCEPCIÓN</option>
             </select>
           </div>
         </div>
@@ -1861,13 +1861,34 @@ function iniciarScrollTabla(){
 }
 
 function esPagadoSiJs(valor){
-  return ['SÃ­', 'S\u00c3\u00ad'].includes(String(valor || ''));
+  return ['Sí', 'SÃ­', 'S\u00c3\u00ad'].includes(String(valor || ''));
 }
 
 function normalizarMotivo(valor){
   return String(valor || '')
+    .replace('ONCOLÓGICO', 'ONCOLOGICO')
     .replace('ONCOLÃ“GICO', 'ONCOLOGICO')
+    .replace('EXCEPCIÓN', 'EXCEPCION')
     .replace('EXCEPCIÃ“N', 'EXCEPCION');
+}
+
+function textoVisible(txt){
+  return String(txt || '')
+    .replace(/ContraseÃ±a/g, 'Contraseña')
+    .replace(/GestiÃ³n/g, 'Gestión')
+    .replace(/anÃ¡lisis/g, 'análisis')
+    .replace(/automÃ¡ticamente/g, 'automáticamente')
+    .replace(/PÃ©rez/g, 'Pérez')
+    .replace(/AcciÃ³n/g, 'Acción')
+    .replace(/invÃ¡lido/g, 'inválido')
+    .replace(/vÃ¡lido/g, 'válido')
+    .replace(/enviÃ³/g, 'envió')
+    .replace(/ReenvÃ­o/g, 'Reenvío')
+    .replace(/vacÃ­as/g, 'vacías')
+    .replace(/todavÃ­a/g, 'todavía')
+    .replace(/SÃ­/g, 'Sí')
+    .replace(/ONCOLÃ“GICO/g, 'ONCOLÓGICO')
+    .replace(/EXCEPCIÃ“N/g, 'EXCEPCIÓN');
 }
 
 function htmlAttr(txt){
@@ -1879,19 +1900,19 @@ function htmlAttr(txt){
 }
 
 function htmlText(txt){
-  return htmlAttr(txt).replace(/'/g, '&#039;');
+  return htmlAttr(textoVisible(txt)).replace(/'/g, '&#039;');
 }
 
 function mensajeResultadoEmail(data){
   if(data.enviado === true){
-    return 'âœ… Resultado cargado correctamente.\nâœ… Email enviado a ' + data.email + '.';
+    return 'Resultado cargado correctamente.\nEmail enviado a ' + data.email + '.';
   }
 
   if(data.error === 'Sin email cargado'){
-    return 'âœ… Resultado cargado correctamente.\nâšª No se enviÃ³ email porque el paciente no tiene email cargado.';
+    return 'Resultado cargado correctamente.\nNo se envió email porque el paciente no tiene email cargado.';
   }
 
-  return 'âœ… Resultado cargado correctamente.\nâŒ No se pudo enviar el email.\nMotivo: ' + (data.error || 'Error desconocido');
+  return 'Resultado cargado correctamente.\nNo se pudo enviar el email.\nMotivo: ' + (textoVisible(data.error) || 'Error desconocido');
 }
 
 async function apiGet(params){
@@ -1932,12 +1953,12 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
   }
 
   if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-    alert('Email invÃ¡lido');
+    alert('Email inválido');
     return;
   }
 
   if(esPagadoSiJs(pagado) && Number(monto) < 0){
-  alert('Monto invÃ¡lido');
+  alert('Monto inválido');
   return;
 }
 
@@ -1958,12 +1979,12 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
   }
 
   mensaje.className = 'mensaje';
-  mensaje.innerHTML = 'â³ Guardando registro...';
+  mensaje.innerHTML = 'Guardando registro...';
 
   const data = await apiPost(fd);
 
   if(data.ok){
-    mensaje.innerHTML = 'âœ… Registro guardado correctamente';
+    mensaje.innerHTML = 'Registro guardado correctamente';
 
     this.reset();
     document.getElementById('pagado').value = 'No';
@@ -1979,7 +2000,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
     abrirTab('buscar', document.querySelector('.tab-btn'));
   }else{
     mensaje.className = 'mensaje error';
-    mensaje.innerHTML = 'âŒ ' + (data.error || 'Error al guardar');
+    mensaje.innerHTML = textoVisible(data.error) || 'Error al guardar';
   }
 });
 
@@ -2001,7 +2022,7 @@ async function cargarRegistros(){
   tbody.innerHTML = '';
 
   if(!data.ok){
-    tbody.innerHTML = `<tr><td colspan="7">${data.error || 'Error al cargar registros'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7">${htmlText(data.error || 'Error al cargar registros')}</td></tr>`;
     return;
   }
 
@@ -2038,9 +2059,9 @@ async function cargarRegistros(){
     const tr = document.createElement('tr');
 
     tr.innerHTML = `
+      <td>${htmlText(r.fechaCarga || '-')}</td>
       <td><button type="button" class="nombre-link" onclick="abrirDetalle('${r.id}')">${htmlText(r.nombre || '-')}</button></td>
       <td>${htmlText(r.dni || '-')}</td>
-      <td>${htmlText(r.email || '-')}</td>
 
       <td>
         <span class="pago-pill ${esPagadoSiJs(r.pagado) ? 'pagado' : 'nopagado'}">
@@ -2215,7 +2236,7 @@ async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
     monto = prompt('Ingrese el monto pagado');
 
     if(monto === null || monto === '' || Number(monto) < 0){
-  alert('Monto invÃ¡lido');
+  alert('Monto inválido');
   return;
 }
   }
@@ -2247,7 +2268,7 @@ async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
         await cargarResumen();
         alert('Registro marcado como realizado');
       }else{
-        alert(data.error || 'Error');
+        alert(textoVisible(data.error) || 'Error');
       }
     };
 
@@ -2262,7 +2283,7 @@ async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
     await cargarResumen();
     alert('Registro marcado como realizado');
   }else{
-    alert(data.error || 'Error');
+    alert(textoVisible(data.error) || 'Error');
   }
 }
 
@@ -2338,12 +2359,12 @@ document.getElementById('formEditar').addEventListener('submit', async function(
   }
 
   if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-    alert('Email invÃ¡lido');
+    alert('Email inválido');
     return;
   }
 
   if(esPagadoSiJs(pagado) && Number(monto) < 0){
-    alert('Monto invÃ¡lido');
+    alert('Monto inválido');
     return;
   }
 
@@ -2364,7 +2385,7 @@ document.getElementById('formEditar').addEventListener('submit', async function(
   }
 
   mensaje.className = 'mensaje';
-  mensaje.innerHTML = 'â³ Guardando cambios...';
+  mensaje.innerHTML = 'Guardando cambios...';
 
   const data = await apiPost(fd);
 
@@ -2375,7 +2396,7 @@ document.getElementById('formEditar').addEventListener('submit', async function(
     alert('Registro actualizado correctamente');
   }else{
     mensaje.className = 'mensaje error';
-    mensaje.innerHTML = 'âŒ ' + (data.error || 'Error al guardar');
+    mensaje.innerHTML = textoVisible(data.error) || 'Error al guardar';
   }
 });
 
@@ -2403,7 +2424,7 @@ async function subirResultado(id){
       await cargarRegistros();
       alert(mensajeResultadoEmail(data));
     }else{
-      alert(data.error || 'Error');
+      alert(textoVisible(data.error) || 'Error');
     }
   };
 
@@ -2421,20 +2442,20 @@ async function reenviarEmail(id){
 
   if(data.ok){
     if(data.enviado === true){
-      alert('âœ… Email enviado a ' + data.email + '.');
+      alert('Email enviado a ' + data.email + '.');
     }else if(data.error === 'Sin email cargado'){
-      alert('âšª No se enviÃ³ email porque el paciente no tiene email cargado.');
+      alert('No se envió email porque el paciente no tiene email cargado.');
     }else{
-      alert('âŒ No se pudo enviar el email.\nMotivo: ' + (data.error || 'Error desconocido'));
+      alert('No se pudo enviar el email.\nMotivo: ' + (textoVisible(data.error) || 'Error desconocido'));
     }
   }else{
-    alert(data.error || 'Error');
+    alert(textoVisible(data.error) || 'Error');
   }
 }
 
 async function eliminarRegistro(id){
 
-  if(!confirm('Â¿Eliminar registro, adjunto y resultado?')){
+  if(!confirm('¿Eliminar registro, adjunto y resultado?')){
     return;
   }
 
@@ -2449,7 +2470,7 @@ async function eliminarRegistro(id){
     await cargarResumen();
     alert('Registro eliminado');
   }else{
-    alert(data.error || 'Error');
+    alert(textoVisible(data.error) || 'Error');
   }
 }
 
@@ -2472,13 +2493,13 @@ async function cargarResumen(){
   const detalle = document.getElementById('detalleMeses');
 
   if(!data.meses.length){
-    detalle.innerHTML = '<p>No hay registros todavÃ­a.</p>';
+    detalle.innerHTML = '<p>No hay registros todavía.</p>';
     return;
   }
 
   detalle.innerHTML = data.meses.map(m=>`
     <div style="padding:12px;border-bottom:1px solid #e5e7eb;">
-      <strong>${m.mes}</strong><br>
+      <strong>${htmlText(m.mes)}</strong><br>
       Realizados: ${m.realizados} |
       Pendientes: ${m.pendientes} |
       Recaudado: ${money(m.monto)}
