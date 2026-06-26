@@ -368,6 +368,65 @@ function rutaResultadoAbsoluta($rutaRelativa){
   return $archivo;
 }
 
+function enmascararDebugSMTP($debug){
+  $debug = (string)$debug;
+  $sensibles = [
+    SMTP_PASS,
+    base64_encode(SMTP_PASS),
+    base64_encode("\0" . SMTP_USER . "\0" . SMTP_PASS)
+  ];
+
+  foreach ($sensibles as $sensible) {
+    if ($sensible !== '') {
+      $debug = str_replace($sensible, '[oculto]', $debug);
+    }
+  }
+
+  return $debug;
+}
+
+function registrarErrorEnvioMail($registro, $archivo, $mail, $e, $smtpDebug){
+  $logsDir = __DIR__ . '/logs';
+  if (!is_dir($logsDir)) {
+    @mkdir($logsDir, 0755, true);
+  }
+
+  $tamanoArchivo = (is_string($archivo) && file_exists($archivo)) ? filesize($archivo) . ' bytes' : 'No disponible';
+  $errorInfo = $mail ? $mail->ErrorInfo : '';
+  $contenido =
+    "----------------------------------\n" .
+    "Fecha: " . date('d/m/Y H:i:s') . "\n" .
+    "Registro ID: " . ($registro['id'] ?? '') . "\n" .
+    "Destinatario: " . limpiarTexto($registro['email'] ?? '') . "\n" .
+    "Nombre: " . limpiarTexto($registro['nombre'] ?? '') . "\n" .
+    "Resultado: " . ($registro['resultado'] ?? '') . "\n" .
+    "Archivo absoluto: " . (is_string($archivo) ? $archivo : '') . "\n" .
+    "Tamaño archivo: " . $tamanoArchivo . "\n" .
+    "SMTP_HOST: " . SMTP_HOST . "\n" .
+    "SMTP_PORT: " . SMTP_PORT . "\n" .
+    "SMTP_SECURE: " . SMTP_SECURE . "\n" .
+    "SMTP_USER: " . SMTP_USER . "\n" .
+    "PHPMailer ErrorInfo: " . $errorInfo . "\n" .
+    "Exception message: " . $e->getMessage() . "\n" .
+    "SMTPDebug:\n" . enmascararDebugSMTP($smtpDebug) .
+    "----------------------------------\n";
+
+  @file_put_contents($logsDir . '/mail_error.log', $contenido, FILE_APPEND | LOCK_EX);
+}
+
+class ErrorEnvioMailException extends Exception {
+  private $detalleEmail;
+
+  public function __construct($mensaje, $detalleEmail, Throwable $anterior = null){
+    parent::__construct($mensaje, 0, $anterior);
+    $this->detalleEmail = $detalleEmail;
+  }
+
+  public function getDetalleEmail(){
+    return $this->detalleEmail;
+  }
+}
+
 function enviarResultadoPorEmail($registro){
   $email = limpiarTexto($registro['email'] ?? '');
   $nombre = limpiarTexto($registro['nombre'] ?? '');
@@ -392,8 +451,14 @@ function enviarResultadoPorEmail($registro){
   }
 
   $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+  $smtpDebug = '';
 
   try {
+    $mail->SMTPDebug = 2;
+    $mail->Debugoutput = function($str, $level) use (&$smtpDebug) {
+      $smtpDebug .= "[" . $level . "] " . $str . "\n";
+    };
+
     $mail->isSMTP();
     $mail->Host = SMTP_HOST;
     $mail->SMTPAuth = true;
@@ -418,7 +483,8 @@ function enviarResultadoPorEmail($registro){
     $mail->addAttachment($archivo, basename($archivo));
     $mail->send();
   } catch (Throwable $e) {
-    throw new Exception($e->getMessage());
+    registrarErrorEnvioMail($registro, $archivo, $mail, $e, $smtpDebug);
+    throw new ErrorEnvioMailException($e->getMessage(), $mail->ErrorInfo . ' | ' . $e->getMessage(), $e);
   }
 }
 
@@ -451,7 +517,7 @@ function actualizarEstadoEmailResultado(&$registro){
   } catch (Throwable $e) {
     $registro['emailEnviado'] = false;
     $registro['fechaEmail'] = '';
-    $registro['errorEmail'] = $e->getMessage();
+    $registro['errorEmail'] = ($e instanceof ErrorEnvioMailException) ? $e->getDetalleEmail() : $e->getMessage();
     return [
       'enviado' => false,
       'email' => $email,
