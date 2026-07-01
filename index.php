@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 session_start();
 
 define('PASSWORD_SISTEMA', 'Pasteleros2026');
@@ -636,11 +636,259 @@ function resumenRegistros($registros){
   ];
 }
 
+function hExcel($valor){
+  return htmlspecialchars((string)$valor, ENT_QUOTES, 'UTF-8');
+}
+
+function formatoMontoArg($monto){
+  return '$ ' . number_format((float)$monto, 2, ',', '.');
+}
+
+function nombreMesInforme($mes){
+  $partes = explode('-', (string)$mes);
+  $anio = $partes[0] ?? '';
+  $numeroMes = (int)($partes[1] ?? 0);
+  $nombres = [
+    1 => 'Enero',
+    2 => 'Febrero',
+    3 => 'Marzo',
+    4 => 'Abril',
+    5 => 'Mayo',
+    6 => 'Junio',
+    7 => 'Julio',
+    8 => 'Agosto',
+    9 => 'Septiembre',
+    10 => 'Octubre',
+    11 => 'Noviembre',
+    12 => 'Diciembre'
+  ];
+
+  return ($nombres[$numeroMes] ?? $mes) . ' ' . $anio;
+}
+
+function normalizarMotivoInforme($motivo){
+  $motivo = trim((string)$motivo);
+  $reemplazos = [
+    'ONCOLÃ“GICO' => 'ONCOLOGICO',
+    'ONCOLÓGICO' => 'ONCOLOGICO',
+    'ONCOLOGICO' => 'ONCOLOGICO',
+    'EXCEPCIÃ“N' => 'EXCEPCION',
+    'EXCEPCIÓN' => 'EXCEPCION',
+    'EXCEPCION' => 'EXCEPCION',
+    'DISCAPACIDAD' => 'DISCAPACIDAD',
+    'PMI' => 'PMI'
+  ];
+  $upper = function_exists('mb_strtoupper')
+    ? mb_strtoupper($motivo, 'UTF-8')
+    : strtoupper($motivo);
+
+  foreach ($reemplazos as $buscar => $normalizado) {
+    if (strpos($upper, $buscar) !== false) {
+      return $normalizado;
+    }
+  }
+
+  return $upper;
+}
+
+function exportarInformeMensual($registros, $mes){
+  if (!preg_match('/^\d{4}-\d{2}$/', $mes)) {
+    $mes = date('Y-m');
+  }
+
+  $delMes = array_values(array_filter($registros, function($r) use ($mes) {
+    return substr((string)($r['fechaISO'] ?? ''), 0, 7) === $mes;
+  }));
+
+  $resumen = [
+    'total' => count($delMes),
+    'realizados' => 0,
+    'pendientes' => 0,
+    'pagados' => 0,
+    'noPagados' => 0,
+    'recaudado' => 0,
+    'resultados' => 0,
+    'emails' => 0,
+    'montoCero' => 0,
+    'pmi' => 0,
+    'oncologico' => 0,
+    'discapacidad' => 0,
+    'excepcion' => 0
+  ];
+  $diario = [];
+
+  foreach ($delMes as $r) {
+    $estado = $r['estado'] ?? 'Pendiente';
+    $fechaISO = (string)($r['fechaISO'] ?? '');
+    $fechaDia = substr($fechaISO, 0, 10);
+    $monto = (float)($r['monto'] ?? 0);
+    $pagado = esPagadoSi($r['pagado'] ?? '');
+    $motivo = normalizarMotivoInforme($r['motivo'] ?? '');
+
+    if ($estado === 'Realizado') {
+      $resumen['realizados']++;
+    } else {
+      $resumen['pendientes']++;
+    }
+
+    if ($pagado) {
+      $resumen['pagados']++;
+      $resumen['recaudado'] += $monto;
+    } else {
+      $resumen['noPagados']++;
+    }
+
+    if ($monto === 0.0) $resumen['montoCero']++;
+    if (!empty($r['resultado'])) $resumen['resultados']++;
+    if (($r['emailEnviado'] ?? false) === true) $resumen['emails']++;
+    if ($motivo === 'PMI') $resumen['pmi']++;
+    if ($motivo === 'ONCOLOGICO') $resumen['oncologico']++;
+    if ($motivo === 'DISCAPACIDAD') $resumen['discapacidad']++;
+    if ($motivo === 'EXCEPCION') $resumen['excepcion']++;
+
+    if ($fechaDia === '') {
+      $fechaDia = 'Sin fecha';
+    }
+
+    if (!isset($diario[$fechaDia])) {
+      $diario[$fechaDia] = [
+        'fecha' => $fechaDia,
+        'cantidad' => 0,
+        'pagados' => 0,
+        'recaudado' => 0
+      ];
+    }
+
+    $diario[$fechaDia]['cantidad']++;
+    if ($pagado) {
+      $diario[$fechaDia]['pagados']++;
+      $diario[$fechaDia]['recaudado'] += $monto;
+    }
+  }
+
+  ksort($diario);
+
+  $filename = 'informe_analisis_' . $mes . '.xls';
+  header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+  header('Content-Disposition: attachment; filename=' . $filename);
+  header('Pragma: no-cache');
+  header('Expires: 0');
+
+  echo "\xEF\xBB\xBF";
+  ?>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;color:#1f2933;}
+    h1{color:#0f7a43;font-size:22px;margin:0 0 8px;}
+    h2{color:#0f7a43;font-size:16px;margin:24px 0 8px;}
+    table{border-collapse:collapse;width:100%;margin-bottom:12px;}
+    th{background:#0f7a43;color:#fff;font-weight:bold;}
+    th,td{border:1px solid #cbd5e1;padding:7px;vertical-align:top;}
+    .label{background:#eef7f2;font-weight:bold;width:260px;}
+    .money{text-align:right;}
+    .muted{color:#64748b;}
+  </style>
+</head>
+<body>
+  <h1>INFORME MENSUAL DE ANÁLISIS</h1>
+  <table>
+    <tr><td class="label">Mes informado</td><td><?= hExcel(nombreMesInforme($mes)) ?></td></tr>
+    <tr><td class="label">Fecha de generación</td><td><?= hExcel(date('d/m/Y H:i')) ?></td></tr>
+    <tr><td class="label">Institución</td><td>Obra Social Pasteleros Mendoza</td></tr>
+  </table>
+
+  <h2>Resumen general</h2>
+  <table>
+    <tr><th>Indicador</th><th>Total</th></tr>
+    <tr><td>Total de registros del mes</td><td><?= (int)$resumen['total'] ?></td></tr>
+    <tr><td>Total realizados</td><td><?= (int)$resumen['realizados'] ?></td></tr>
+    <tr><td>Total pendientes</td><td><?= (int)$resumen['pendientes'] ?></td></tr>
+    <tr><td>Total pagados</td><td><?= (int)$resumen['pagados'] ?></td></tr>
+    <tr><td>Total no pagados</td><td><?= (int)$resumen['noPagados'] ?></td></tr>
+    <tr><td>Total recaudado</td><td class="money"><?= hExcel(formatoMontoArg($resumen['recaudado'])) ?></td></tr>
+    <tr><td>Resultados cargados</td><td><?= (int)$resumen['resultados'] ?></td></tr>
+    <tr><td>Emails enviados</td><td><?= (int)$resumen['emails'] ?></td></tr>
+    <tr><td>Cantidad con monto $0</td><td><?= (int)$resumen['montoCero'] ?></td></tr>
+    <tr><td>Gratuitos PMI</td><td><?= (int)$resumen['pmi'] ?></td></tr>
+    <tr><td>Gratuitos ONCOLÓGICO</td><td><?= (int)$resumen['oncologico'] ?></td></tr>
+    <tr><td>Gratuitos DISCAPACIDAD</td><td><?= (int)$resumen['discapacidad'] ?></td></tr>
+    <tr><td>Gratuitos EXCEPCIÓN</td><td><?= (int)$resumen['excepcion'] ?></td></tr>
+  </table>
+
+  <h2>Recaudación diaria</h2>
+  <table>
+    <tr><th>Fecha</th><th>Cantidad de análisis</th><th>Cantidad pagados</th><th>Recaudado</th></tr>
+    <?php if (empty($diario)): ?>
+      <tr><td colspan="4" class="muted">No hay registros para el mes seleccionado.</td></tr>
+    <?php else: ?>
+      <?php foreach ($diario as $dia): ?>
+        <tr>
+          <td><?= hExcel($dia['fecha']) ?></td>
+          <td><?= (int)$dia['cantidad'] ?></td>
+          <td><?= (int)$dia['pagados'] ?></td>
+          <td class="money"><?= hExcel(formatoMontoArg($dia['recaudado'])) ?></td>
+        </tr>
+      <?php endforeach; ?>
+    <?php endif; ?>
+  </table>
+
+  <h2>Detalle completo</h2>
+  <table>
+    <tr>
+      <th>Fecha carga</th>
+      <th>Nombre</th>
+      <th>DNI</th>
+      <th>Email</th>
+      <th>Estado</th>
+      <th>Pagado</th>
+      <th>Monto</th>
+      <th>Motivo</th>
+      <th>Fecha realizado</th>
+      <th>Resultado cargado</th>
+      <th>Email enviado</th>
+      <th>Fecha email</th>
+      <th>Error email</th>
+    </tr>
+    <?php if (empty($delMes)): ?>
+      <tr><td colspan="13" class="muted">No hay registros para el mes seleccionado.</td></tr>
+    <?php else: ?>
+      <?php foreach ($delMes as $r): ?>
+        <tr>
+          <td><?= hExcel($r['fechaCarga'] ?? '') ?></td>
+          <td><?= hExcel($r['nombre'] ?? '') ?></td>
+          <td><?= hExcel($r['dni'] ?? '') ?></td>
+          <td><?= hExcel($r['email'] ?? '') ?></td>
+          <td><?= hExcel($r['estado'] ?? '') ?></td>
+          <td><?= esPagadoSi($r['pagado'] ?? '') ? 'Sí' : 'No' ?></td>
+          <td class="money"><?= hExcel(formatoMontoArg((float)($r['monto'] ?? 0))) ?></td>
+          <td><?= hExcel($r['motivo'] ?? '') ?></td>
+          <td><?= hExcel($r['fechaRealizado'] ?? '') ?></td>
+          <td><?= !empty($r['resultado']) ? 'Sí' : 'No' ?></td>
+          <td><?= (($r['emailEnviado'] ?? false) === true) ? 'Sí' : 'No' ?></td>
+          <td><?= hExcel($r['fechaEmail'] ?? '') ?></td>
+          <td><?= hExcel($r['errorEmail'] ?? '') ?></td>
+        </tr>
+      <?php endforeach; ?>
+    <?php endif; ?>
+  </table>
+</body>
+</html>
+  <?php
+  exit;
+}
+
 /* =========================
    API INTERNA
    ========================= */
 
 asegurarSistema();
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['export'] ?? '') === 'informe_mensual') {
+  exportarInformeMensual(leerRegistros(), $_GET['mes'] ?? date('Y-m'));
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['api'])) {
   $api = $_GET['api'];
@@ -1242,6 +1490,22 @@ if ($accion === 'eliminar') {
       font-weight:bold;
     }
 
+    .informe-mensual{
+      display:flex;
+      gap:14px;
+      align-items:flex-end;
+      flex-wrap:wrap;
+    }
+
+    .informe-mensual .campo{
+      min-width:240px;
+      flex:1;
+    }
+
+    .informe-mensual button{
+      min-width:260px;
+    }
+
     .mensaje{
       margin-top:15px;
       font-weight:bold;
@@ -1669,6 +1933,20 @@ if ($accion === 'eliminar') {
     </div>
 
     <div class="card" style="margin-top:20px;">
+      <h2>Informe mensual</h2>
+      <div class="informe-mensual">
+        <div class="campo">
+          <label for="mesInforme">Mes</label>
+          <select id="mesInforme">
+            <option value="">Cargando meses...</option>
+          </select>
+        </div>
+        <button type="button" onclick="descargarInformeMensual()">Descargar informe mensual Excel</button>
+      </div>
+      <div class="muted" id="mensajeInformeMensual" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card" style="margin-top:20px;">
       <h2>Detalle por mes</h2>
       <div id="detalleMeses"></div>
     </div>
@@ -1898,6 +2176,15 @@ function sincronizarBotonesEstado(){
 
 function money(n){
   return '$ ' + Number(n || 0).toLocaleString('es-AR');
+}
+
+function nombreMesVisible(mes){
+  const partes = String(mes || '').split('-');
+  if(partes.length !== 2) return mes || '';
+
+  const fecha = new Date(Number(partes[0]), Number(partes[1]) - 1, 1);
+  const nombre = fecha.toLocaleDateString('es-AR', {month:'long', year:'numeric'});
+  return nombre.charAt(0).toUpperCase() + nombre.slice(1);
 }
 
 function ajustarScrollTabla(){
@@ -2561,6 +2848,8 @@ async function cargarResumen(){
     ' / ' +
     money(data.mesActualMonto);
 
+  cargarSelectorInformeMensual(data.meses || []);
+
   const detalle = document.getElementById('detalleMeses');
 
   if(!data.meses.length){
@@ -2576,6 +2865,43 @@ async function cargarResumen(){
       Recaudado: ${money(m.monto)}
     </div>
   `).join('');
+}
+
+function cargarSelectorInformeMensual(meses){
+  const select = document.getElementById('mesInforme');
+  const mensaje = document.getElementById('mensajeInformeMensual');
+
+  if(!select) return;
+
+  const valorActual = select.value;
+
+  if(!meses.length){
+    select.innerHTML = '<option value="">Sin meses disponibles</option>';
+    if(mensaje) mensaje.innerText = 'Cuando haya registros cargados, aparecerán los meses disponibles.';
+    return;
+  }
+
+  select.innerHTML = meses.map(m => {
+    const mes = m.mes || '';
+    return `<option value="${htmlAttr(mes)}">${htmlText(nombreMesVisible(mes))}</option>`;
+  }).join('');
+
+  if(valorActual && meses.some(m => m.mes === valorActual)){
+    select.value = valorActual;
+  }
+
+  if(mensaje) mensaje.innerText = '';
+}
+
+function descargarInformeMensual(){
+  const mes = document.getElementById('mesInforme').value;
+
+  if(!mes){
+    alert('Seleccioná un mes para generar el informe.');
+    return;
+  }
+
+  window.open('index.php?export=informe_mensual&mes=' + encodeURIComponent(mes), '_blank');
 }
 
 function verArchivo(url, ext, titulo){
