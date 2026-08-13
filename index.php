@@ -209,23 +209,43 @@ function rutaWeb($rutaAbsoluta){
   return $rel;
 }
 
-function guardarAdjunto($campo, $estado, $dni, $nombre){
-  if (!isset($_FILES[$campo]) || $_FILES[$campo]['error'] === UPLOAD_ERR_NO_FILE) {
-    return '';
+function normalizarAdjuntos($adjuntos){
+  if (is_array($adjuntos)) {
+    return array_values(array_filter(array_map('strval', $adjuntos), function($ruta){
+      return trim($ruta) !== '';
+    }));
   }
 
-  if ($_FILES[$campo]['error'] !== UPLOAD_ERR_OK) {
-    throw new Exception('No se pudo subir el archivo.');
+  if (is_string($adjuntos)) {
+    $adjuntos = trim($adjuntos);
+    if ($adjuntos === '') return [];
+
+    $json = json_decode($adjuntos, true);
+    if (is_array($json)) {
+      return normalizarAdjuntos($json);
+    }
+
+    return [$adjuntos];
+  }
+
+  return [];
+}
+
+function guardarAdjuntos($campo, $estado, $dni, $nombre){
+  if (!isset($_FILES[$campo])) {
+    return [];
+  }
+
+  $files = $_FILES[$campo];
+  $nombres = is_array($files['name']) ? $files['name'] : [$files['name']];
+  $tmpNames = is_array($files['tmp_name']) ? $files['tmp_name'] : [$files['tmp_name']];
+  $errores = is_array($files['error']) ? $files['error'] : [$files['error']];
+
+  if (count($errores) === 1 && $errores[0] === UPLOAD_ERR_NO_FILE) {
+    return [];
   }
 
   $permitidos = ['pdf', 'jpg', 'jpeg', 'png'];
-  $original = $_FILES[$campo]['name'];
-  $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
-
-  if (!in_array($ext, $permitidos, true)) {
-    throw new Exception('Archivo no permitido. Solo PDF, JPG, JPEG o PNG.');
-  }
-
   $baseDir = strtolower($estado) === 'realizado' ? REALIZADOS_DIR : PENDIENTES_DIR;
 
   if (strtolower($estado) === 'realizado') {
@@ -239,14 +259,36 @@ function guardarAdjunto($campo, $estado, $dni, $nombre){
     mkdir($destDir, 0755, true);
   }
 
-  $nombreFinal = fechaArchivo() . ' - ' . limpiarNombreArchivo($original);
-  $destino = $destDir . '/' . $nombreFinal;
+  $guardados = [];
 
-  if (!move_uploaded_file($_FILES[$campo]['tmp_name'], $destino)) {
-    throw new Exception('No se pudo guardar el adjunto en el hosting.');
+  foreach ($nombres as $i => $original) {
+    $error = $errores[$i] ?? UPLOAD_ERR_NO_FILE;
+
+    if ($error === UPLOAD_ERR_NO_FILE) {
+      continue;
+    }
+
+    if ($error !== UPLOAD_ERR_OK) {
+      throw new Exception('No se pudo subir uno de los archivos.');
+    }
+
+    $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+
+    if (!in_array($ext, $permitidos, true)) {
+      throw new Exception('Archivo no permitido. Solo PDF, JPG, JPEG o PNG.');
+    }
+
+    $nombreFinal = fechaArchivo() . '_' . ($i + 1) . ' - ' . limpiarNombreArchivo($original);
+    $destino = $destDir . '/' . $nombreFinal;
+
+    if (!move_uploaded_file($tmpNames[$i], $destino)) {
+      throw new Exception('No se pudo guardar uno de los adjuntos en el hosting.');
+    }
+
+    $guardados[] = rutaWeb($destino);
   }
 
-  return rutaWeb($destino);
+  return $guardados;
 }
 
 function moverAdjuntoARealizados($rutaRelativa, $dni, $nombre){
@@ -269,6 +311,19 @@ function moverAdjuntoARealizados($rutaRelativa, $dni, $nombre){
   }
 
   return rutaWeb($destino);
+}
+
+function moverAdjuntosARealizados($adjuntos, $dni, $nombre){
+  $movidos = [];
+
+  foreach (normalizarAdjuntos($adjuntos) as $adjunto) {
+    $movido = moverAdjuntoARealizados($adjunto, $dni, $nombre);
+    if ($movido !== '') {
+      $movidos[] = $movido;
+    }
+  }
+
+  return $movidos;
 }
 
 function guardarResultado($campo, $dni, $nombre){
@@ -924,9 +979,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       if (esPagadoSi($pagado) && $monto < 0) throw new Exception('Monto invÃ¡lido.');
       if (!in_array($estado, ['Pendiente', 'Realizado'], true)) $estado = 'Pendiente';
 
-      $adjunto = guardarAdjunto('archivo', $estado, $dni, $nombre);
+      $adjuntos = guardarAdjuntos('archivo', $estado, $dni, $nombre);
 
-      if ($estado === 'Realizado' && $adjunto === '') {
+      if ($estado === 'Realizado' && count($adjuntos) === 0) {
         throw new Exception('Para cargar como realizado debe adjuntar el pedido.');
       }
 
@@ -943,7 +998,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'motivo' => $_POST['motivo'] ?? '',
         'pagado' => $pagado,
         'monto' => esPagadoSi($pagado) ? $monto : 0,
-        'adjunto' => $adjunto,
+        'adjunto' => $adjuntos,
         'resultado' => '',
         'fechaResultado' => '',
         'emailEnviado' => false,
@@ -972,10 +1027,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   throw new Exception('Debe ingresar un monto vÃ¡lido.');
 }
 
-          if (isset($_FILES['archivo']) && $_FILES['archivo']['error'] !== UPLOAD_ERR_NO_FILE) {
-            $r['adjunto'] = guardarAdjunto('archivo', 'Realizado', $r['dni'] ?? '', $r['nombre'] ?? '');
-          } elseif (!empty($r['adjunto'])) {
-            $r['adjunto'] = moverAdjuntoARealizados($r['adjunto'], $r['dni'] ?? '', $r['nombre'] ?? '');
+          $adjuntosActuales = normalizarAdjuntos($r['adjunto'] ?? []);
+          $adjuntosNuevos = guardarAdjuntos('archivo', 'Realizado', $r['dni'] ?? '', $r['nombre'] ?? '');
+
+          if (count($adjuntosActuales) > 0) {
+            $r['adjunto'] = array_merge(
+              moverAdjuntosARealizados($adjuntosActuales, $r['dni'] ?? '', $r['nombre'] ?? ''),
+              $adjuntosNuevos
+            );
+          } elseif (count($adjuntosNuevos) > 0) {
+            $r['adjunto'] = $adjuntosNuevos;
           } else {
             throw new Exception('Debe adjuntar el pedido para marcar como realizado.');
           }
@@ -1170,6 +1231,10 @@ if ($accion === 'eliminar') {
 
       $encontrado = true;
       eliminarArchivoYCarpetasVacias($r['resultado'] ?? '', RESULTADOS_DIR);
+      foreach (normalizarAdjuntos($r['adjunto'] ?? []) as $adjunto) {
+        eliminarArchivoYCarpetasVacias($adjunto, ADJUNTOS_DIR);
+      }
+      $r['adjunto'] = '';
 
       if (!empty($r['adjunto'])) {
 
@@ -1570,6 +1635,25 @@ if ($accion === 'eliminar') {
       background:none;
     }
 
+    .archivo-lista{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+
+    .archivo-item{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:8px 0;
+      border-bottom:1px solid #e5e7eb;
+    }
+
+    .archivo-item span{
+      word-break:break-word;
+    }
+
     .detalle-grid{
       display:grid;
       grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
@@ -1885,7 +1969,8 @@ if ($accion === 'eliminar') {
 
           <div class="campo">
             <label>Adjuntar pedido</label>
-            <input type="file" name="archivo" id="archivo" accept=".jpg,.jpeg,.png,.pdf">
+            <input type="file" name="archivo[]" id="archivo" accept=".jpg,.jpeg,.png,.pdf" multiple>
+            <span class="muted" id="archivoCantidad">0 archivos seleccionados</span>
           </div>
         </div>
 
@@ -2261,6 +2346,52 @@ function htmlText(txt){
   return htmlAttr(textoVisible(txt)).replace(/'/g, '&#039;');
 }
 
+function jsString(txt){
+  return String(txt || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '');
+}
+
+function adjuntosLista(adjuntos){
+  if(Array.isArray(adjuntos)){
+    return adjuntos.filter(Boolean);
+  }
+
+  if(typeof adjuntos === 'string' && adjuntos.trim()){
+    try{
+      const parseado = JSON.parse(adjuntos);
+      if(Array.isArray(parseado)){
+        return parseado.filter(Boolean);
+      }
+    }catch(e){}
+
+    return [adjuntos];
+  }
+
+  return [];
+}
+
+function extensionArchivo(url){
+  return String(url || '').split('?')[0].split('.').pop().toLowerCase();
+}
+
+function nombreArchivo(url){
+  const partes = String(url || '').split('/');
+  const nombre = partes[partes.length - 1] || 'Archivo';
+
+  try{
+    return decodeURIComponent(nombre);
+  }catch(e){
+    return nombre;
+  }
+}
+
+function textoCantidadArchivos(cantidad){
+  return cantidad === 1 ? '1 archivo seleccionado' : cantidad + ' archivos seleccionados';
+}
+
 function mensajeResultadoEmail(data){
   if(data.enviado === true){
     return 'Resultado cargado correctamente.\nEmail enviado a ' + data.email + '.';
@@ -2288,6 +2419,10 @@ async function apiPost(formData){
   return await res.json();
 }
 
+document.getElementById('archivo').addEventListener('change', function(){
+  document.getElementById('archivoCantidad').innerText = textoCantidadArchivos(this.files.length);
+});
+
 document.getElementById('formCarga').addEventListener('submit', async function(e){
   e.preventDefault();
 
@@ -2297,7 +2432,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
   const pagado = document.getElementById('pagado').value;
   const monto = document.getElementById('monto').value || 0;
   const estado = document.getElementById('estado').value;
-  const archivo = document.getElementById('archivo').files[0];
+  const archivos = document.getElementById('archivo').files;
   const mensaje = document.getElementById('mensaje');
 
   if(!nombre){
@@ -2325,7 +2460,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
   return;
 }
 
-  if(estado === 'Realizado' && !archivo){
+  if(estado === 'Realizado' && archivos.length === 0){
     alert('Debe adjuntar el pedido');
     return;
   }
@@ -2337,7 +2472,9 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
   }
 
   mensaje.className = 'mensaje';
-  mensaje.innerHTML = 'Guardando registro...';
+  mensaje.innerHTML = archivos.length
+    ? 'Guardando registro (' + textoCantidadArchivos(archivos.length) + ')...'
+    : 'Guardando registro...';
 
   const data = await apiPost(fd);
 
@@ -2349,6 +2486,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
     document.getElementById('monto').value = 0;
     document.getElementById('monto').disabled = true;
     document.getElementById('estado').value = 'Pendiente';
+    document.getElementById('archivoCantidad').innerText = textoCantidadArchivos(0);
 
     document.getElementById('buscarEstado').value = 'Pendiente';
     sincronizarBotonesEstado();
@@ -2393,22 +2531,16 @@ async function cargarRegistros(){
 
   data.registros.forEach(r=>{
     registrosCache[r.id] = r;
-    const adj = r.adjunto || '';
-    const ext = adj.split('.').pop().toLowerCase();
+    const adjuntos = adjuntosLista(r.adjunto);
     const resultado = r.resultado || '';
-    const extResultado = resultado.split('.').pop().toLowerCase();
+    const extResultado = extensionArchivo(resultado);
 
-    const pedidoHtml = adj
-      ? `
-        <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${adj.replace(/'/g, "\\'")}', '${ext}', 'Pedido')">&#128065;</button>
-        <a class="link-btn icon-btn" title="Descargar archivo" href="${adj}" download>&#11015;</a>
-      `
-      : '';
+    const pedidoHtml = archivosPedidoHtml(adjuntos);
 
 
     const resultadoHtml = resultado
       ? `
-        <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${resultado.replace(/'/g, "\\'")}', '${extResultado}', 'Resultado')">&#128065;</button>
+        <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${jsString(resultado)}', '${extResultado}', 'Resultado')">&#128065;</button>
         <a class="link-btn icon-btn" title="Descargar archivo" href="${resultado}" download>&#11015;</a>
         <button class="btn-mini" onclick="subirResultado('${r.id}')">Reemplazar</button>
       `
@@ -2435,7 +2567,7 @@ async function cargarRegistros(){
   ${
     r.estado === 'Pendiente'
       ? `
-        <button class="btn-mini" onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adj ? 'true' : 'false'}, '${(r.motivo || '').replace(/'/g, "\\'")}')">
+        <button class="btn-mini" onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adjuntos.length ? 'true' : 'false'}, '${jsString(r.motivo || '')}')">
           Realizar
         </button>
 
@@ -2471,12 +2603,42 @@ async function cargarRegistros(){
 function archivoBotones(url, ext, titulo){
   if(!url) return '';
 
-  const safeUrl = String(url).replace(/'/g, "\\'");
-  const safeTitulo = String(titulo || 'Archivo').replace(/'/g, "\\'");
+  const safeUrl = jsString(url);
+  const safeTitulo = jsString(titulo || 'Archivo');
 
   return `
     <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${safeUrl}', '${ext}', '${safeTitulo}')">&#128065;</button>
     <a class="link-btn icon-btn" title="Descargar archivo" href="${htmlAttr(url)}" download>&#11015;</a>
+  `;
+}
+
+function archivosPedidoHtml(adjuntos){
+  if(!adjuntos.length) return '';
+
+  if(adjuntos.length === 1){
+    const url = adjuntos[0];
+    return archivoBotones(url, extensionArchivo(url), 'Pedido');
+  }
+
+  return `
+    <button class="btn-mini" onclick="verListaArchivos('${encodeURIComponent(JSON.stringify(adjuntos))}', 'Pedidos')">
+      Ver archivos (${adjuntos.length})
+    </button>
+  `;
+}
+
+function archivosPedidoDetalleHtml(adjuntos){
+  if(!adjuntos.length) return '';
+
+  return `
+    <div class="archivo-lista">
+      ${adjuntos.map((url, i) => `
+        <div class="archivo-item">
+          <span>${htmlText(nombreArchivo(url))}</span>
+          <div>${archivoBotones(url, extensionArchivo(url), 'Pedido ' + (i + 1))}</div>
+        </div>
+      `).join('')}
+    </div>
   `;
 }
 
@@ -2510,10 +2672,9 @@ function abrirDetalle(id){
     return;
   }
 
-  const adj = r.adjunto || '';
+  const adjuntos = adjuntosLista(r.adjunto);
   const resultado = r.resultado || '';
-  const extPedido = adj.split('.').pop().toLowerCase();
-  const extResultado = resultado.split('.').pop().toLowerCase();
+  const extResultado = extensionArchivo(resultado);
   const pagado = esPagadoSiJs(r.pagado);
   const montoDetalle = Number(r.monto) === 0 && r.motivo
     ? `${money(r.monto)} - ${htmlText(r.motivo)}`
@@ -2544,8 +2705,8 @@ function abrirDetalle(id){
 
       <div class="detalle-box">
         <h4>Pedido</h4>
-        <p><strong>Estado:</strong> ${adj ? 'Tiene pedido' : 'Sin pedido'}</p>
-        <div class="detalle-actions">${archivoBotones(adj, extPedido, 'Pedido')}</div>
+        <p><strong>Estado:</strong> ${adjuntos.length ? 'Tiene pedido (' + adjuntos.length + ')' : 'Sin pedido'}</p>
+        <div class="detalle-actions">${archivosPedidoDetalleHtml(adjuntos)}</div>
       </div>
 
       <div class="detalle-box">
@@ -2608,16 +2769,17 @@ async function marcarRealizado(id, pagado, montoActual, tieneAdjunto, motivo){
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.jpg,.jpeg,.png,.pdf';
+    input.multiple = true;
 
     input.onchange = async () => {
-      const archivo = input.files[0];
+      const archivos = Array.from(input.files || []);
 
-      if(!archivo){
+      if(!archivos.length){
         alert('Debe adjuntar el pedido');
         return;
       }
 
-      fd.append('archivo', archivo);
+      archivos.forEach(archivo => fd.append('archivo[]', archivo));
 
       const data = await apiPost(fd);
 
@@ -2902,6 +3064,39 @@ function descargarInformeMensual(){
   }
 
   window.open('index.php?export=informe_mensual&mes=' + encodeURIComponent(mes), '_blank');
+}
+
+function verListaArchivos(adjuntosJson, titulo){
+  let adjuntos = [];
+
+  try{
+    adjuntos = JSON.parse(decodeURIComponent(adjuntosJson));
+  }catch(e){
+    adjuntos = [];
+  }
+
+  const modal = document.getElementById('visorModal');
+  const body = document.getElementById('visorBody');
+  const descargar = document.getElementById('visorDescargar');
+  const visorTitulo = document.getElementById('visorTitulo');
+
+  visorTitulo.innerText = titulo || 'Archivos';
+  descargar.removeAttribute('href');
+  body.innerHTML = `
+    <div class="archivo-lista">
+      ${adjuntos.map((url, i) => `
+        <div class="archivo-item">
+          <span>${htmlText(nombreArchivo(url))}</span>
+          <div>
+            <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${jsString(url)}', '${extensionArchivo(url)}', 'Pedido ${i + 1}')">&#128065;</button>
+            <a class="link-btn icon-btn" title="Descargar archivo" href="${htmlAttr(url)}" download>&#11015;</a>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  modal.classList.add('active');
 }
 
 function verArchivo(url, ext, titulo){
