@@ -141,7 +141,8 @@ define('SMTP_HOST', 'pastagl.ferozo.com');
 define('SMTP_PORT', 465);
 define('SMTP_SECURE', 'ssl');
 define('SMTP_USER', 'consultorios@pastelerosmendoza.org');
-define('SMTP_PASS', 'PEGAR_CONTRASENA_SOLO_EN_DONWEB');
+// La clave SMTP se mantiene exclusivamente en smtp_config.php (no subir a GitHub).
+require_once __DIR__ . '/smtp_config.php';
 define('SMTP_FROM', 'consultorios@pastelerosmendoza.org');
 define('SMTP_FROM_NAME', 'Consultorios OSP Pasteleros Mendoza');
 
