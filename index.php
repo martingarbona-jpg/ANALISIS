@@ -1,25 +1,12 @@
 <?php
-session_start();
-
-define('PASSWORD_SISTEMA', 'Pasteleros2026');
-
-if (isset($_POST['login_password'])) {
-  if ($_POST['login_password'] === PASSWORD_SISTEMA) {
-    $_SESSION['analisis_ok'] = true;
-    header("Location: " . $_SERVER['PHP_SELF']);
-    exit;
-  } else {
-    $login_error = "ContraseÃ±a incorrecta";
-  }
-}
-
-if (isset($_GET['logout'])) {
-  session_destroy();
-  header("Location: " . $_SERVER['PHP_SELF']);
-  exit;
-}
+// Autenticación fuera del archivo principal.
+require_once __DIR__ . '/auth.php';
 
 if (empty($_SESSION['analisis_ok'])) {
+  if (isset($_GET['archivo'])) {
+    http_response_code(403);
+    exit('Debe iniciar sesión en el sistema para acceder al documento.');
+  }
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -91,6 +78,7 @@ button{
   <?php } ?>
 
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'], ENT_QUOTES, 'UTF-8') ?>">
 
     <input
       type="password"
@@ -162,12 +150,66 @@ function leerRegistros(){
   asegurarSistema();
   $json = file_get_contents(DATA_FILE);
   $data = json_decode($json, true);
-  return is_array($data) ? $data : [];
+  if (!is_array($data) || json_last_error() !== JSON_ERROR_NONE) {
+    throw new Exception('No se pudieron leer los registros. No se sobrescribieron los datos.');
+  }
+  return $data;
 }
 
 function guardarRegistros($registros){
   asegurarSistema();
-  file_put_contents(DATA_FILE, json_encode(array_values($registros), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+  $json = json_encode(array_values($registros), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+  $temporal = tempnam(__DIR__, 'registros_tmp_');
+  if ($temporal === false) throw new Exception('No se pudo preparar el guardado.');
+  try {
+    if (file_put_contents($temporal, $json, LOCK_EX) !== strlen($json) || !rename($temporal, DATA_FILE)) {
+      throw new Exception('No se pudieron guardar los registros.');
+    }
+  } finally {
+    if (is_file($temporal)) unlink($temporal);
+  }
+}
+
+// Solo archivos reales dentro de la carpeta autorizada; rechaza traversal y enlaces que escapen.
+function resolverArchivoSeguro($rutaRelativa, $limiteDir){
+  if (!is_string($rutaRelativa) || $rutaRelativa === '' || strpos($rutaRelativa, "\0") !== false) return false;
+  $rutaRelativa = str_replace('\\', '/', $rutaRelativa);
+  if ($rutaRelativa[0] === '/' || preg_match('~(^|/)\.\.(/|$)|:~', $rutaRelativa)) return false;
+  $limite = realpath($limiteDir);
+  $archivo = realpath(__DIR__ . '/' . $rutaRelativa);
+  if ($limite === false || $archivo === false || !is_file($archivo)) return false;
+  $prefijo = $limite . DIRECTORY_SEPARATOR;
+  return strncmp($archivo, $prefijo, strlen($prefijo)) === 0 ? $archivo : false;
+}
+
+function validarDocumentoSubido($temporal, $original){
+  $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
+  $tipos = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'];
+  if (!isset($tipos[$ext]) || !is_uploaded_file($temporal)) {
+    throw new Exception('Archivo no permitido. Solo PDF, JPG, JPEG o PNG.');
+  }
+  $mime = (new finfo(FILEINFO_MIME_TYPE))->file($temporal);
+  if ($mime !== $tipos[$ext] || ($ext !== 'pdf' && @getimagesize($temporal) === false)) {
+    throw new Exception('El contenido del archivo no coincide con su extensión.');
+  }
+}
+
+// .htaccess conserva las URLs existentes y dirige los documentos a este control de sesión.
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['archivo'])) {
+  $archivo = resolverArchivoSeguro($_GET['archivo'], ADJUNTOS_DIR);
+  if ($archivo === false) $archivo = resolverArchivoSeguro($_GET['archivo'], RESULTADOS_DIR);
+  $tipos = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'];
+  $ext = $archivo === false ? '' : strtolower(pathinfo($archivo, PATHINFO_EXTENSION));
+  if ($archivo === false || !isset($tipos[$ext])) {
+    http_response_code(404);
+    exit;
+  }
+  header('Content-Type: ' . $tipos[$ext]);
+  header("Content-Disposition: inline; filename*=UTF-8''" . rawurlencode(basename($archivo)));
+  header('Content-Length: ' . filesize($archivo));
+  session_write_close();
+  readfile($archivo);
+  exit;
 }
 
 function responderJson($ok, $extra = []){
@@ -205,9 +247,10 @@ function fechaArchivo(){
 }
 
 function rutaWeb($rutaAbsoluta){
-  $rel = str_replace(__DIR__ . DIRECTORY_SEPARATOR, '', $rutaAbsoluta);
-  $rel = str_replace(DIRECTORY_SEPARATOR, '/', $rel);
-  return $rel;
+  $ruta = str_replace('\\', '/', $rutaAbsoluta);
+  $prefijo = str_replace('\\', '/', __DIR__) . '/';
+  if (strpos($ruta, $prefijo) !== 0) throw new Exception('Ruta de archivo fuera del sistema.');
+  return substr($ruta, strlen($prefijo));
 }
 
 function normalizarAdjuntos($adjuntos){
@@ -279,6 +322,8 @@ function guardarAdjuntos($campo, $estado, $dni, $nombre){
       throw new Exception('Archivo no permitido. Solo PDF, JPG, JPEG o PNG.');
     }
 
+    validarDocumentoSubido($tmpNames[$i], $original);
+
     $nombreFinal = fechaArchivo() . '_' . ($i + 1) . ' - ' . limpiarNombreArchivo($original);
     $destino = $destDir . '/' . $nombreFinal;
 
@@ -295,8 +340,8 @@ function guardarAdjuntos($campo, $estado, $dni, $nombre){
 function moverAdjuntoARealizados($rutaRelativa, $dni, $nombre){
   if (!$rutaRelativa) return '';
 
-  $origen = __DIR__ . '/' . str_replace(['../', '..\\'], '', $rutaRelativa);
-  if (!file_exists($origen)) return $rutaRelativa;
+  $origen = resolverArchivoSeguro($rutaRelativa, ADJUNTOS_DIR);
+  if ($origen === false) throw new Exception('El adjunto no existe o su ruta no está permitida.');
 
   $persona = limpiarNombreArchivo($nombre . ' - DNI ' . $dni);
   $destDir = REALIZADOS_DIR . '/' . date('Y-m') . '/' . $persona;
@@ -308,7 +353,7 @@ function moverAdjuntoARealizados($rutaRelativa, $dni, $nombre){
   $destino = $destDir . '/' . basename($origen);
 
   if ($origen !== $destino) {
-    @rename($origen, $destino);
+    if (!rename($origen, $destino)) throw new Exception('No se pudo mover el adjunto.');
   }
 
   return rutaWeb($destino);
@@ -344,6 +389,8 @@ function guardarResultado($campo, $dni, $nombre){
     throw new Exception('Resultado no permitido. Solo PDF, JPG, JPEG o PNG.');
   }
 
+  validarDocumentoSubido($_FILES[$campo]['tmp_name'], $original);
+
   $persona = limpiarNombreArchivo($nombre . ' - DNI ' . $dni);
   $destDir = RESULTADOS_DIR . '/' . date('Y-m') . '/' . $persona;
 
@@ -363,8 +410,8 @@ function guardarResultado($campo, $dni, $nombre){
 function eliminarArchivoYCarpetasVacias($rutaRelativa, $limiteDir){
   if (!$rutaRelativa) return;
 
-  $rutaRelativa = str_replace(['../', '..\\'], '', $rutaRelativa);
-  $archivo = __DIR__ . '/' . $rutaRelativa;
+  $archivo = resolverArchivoSeguro($rutaRelativa, $limiteDir);
+  if ($archivo === false) return;
 
   if (file_exists($archivo) && is_file($archivo)) {
     @unlink($archivo);
@@ -414,10 +461,9 @@ function cargarPHPMailer(){
 }
 
 function rutaResultadoAbsoluta($rutaRelativa){
-  $rutaRelativa = str_replace(['../', '..\\'], '', $rutaRelativa);
-  $archivo = __DIR__ . '/' . $rutaRelativa;
+  $archivo = resolverArchivoSeguro($rutaRelativa, RESULTADOS_DIR);
 
-  if (!file_exists($archivo) || !is_file($archivo)) {
+  if ($archivo === false) {
     throw new Exception('El archivo de resultado no existe.');
   }
 
@@ -464,10 +510,10 @@ function registrarErrorEnvioMail($registro, $archivo, $mail, $e, $smtpDebug){
     "SMTP_USER: " . SMTP_USER . "\n" .
     "PHPMailer ErrorInfo: " . $errorInfo . "\n" .
     "Exception message: " . $e->getMessage() . "\n" .
-    "SMTPDebug:\n" . enmascararDebugSMTP($smtpDebug) .
+    "SMTPDebug:\n" . $smtpDebug .
     "----------------------------------\n";
 
-  @file_put_contents($logsDir . '/mail_error.log', $contenido, FILE_APPEND | LOCK_EX);
+  @file_put_contents($logsDir . '/mail_error.log', enmascararDebugSMTP($contenido), FILE_APPEND | LOCK_EX);
 }
 
 class ErrorEnvioMailException extends Exception {
@@ -540,7 +586,11 @@ function enviarResultadoPorEmail($registro){
     $mail->send();
   } catch (Throwable $e) {
     registrarErrorEnvioMail($registro, $archivo, $mail, $e, $smtpDebug);
-    throw new ErrorEnvioMailException($e->getMessage(), $mail->ErrorInfo . ' | ' . $e->getMessage(), $e);
+    throw new ErrorEnvioMailException(
+      enmascararDebugSMTP($e->getMessage()),
+      enmascararDebugSMTP($mail->ErrorInfo . ' | ' . $e->getMessage()),
+      $e
+    );
   }
 }
 
@@ -963,6 +1013,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['api'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   try {
+    validarCsrf();
+    // Bloquea toda la operación leer/modificar/guardar entre sesiones distintas.
+    $bloqueoRegistros = fopen(__DIR__ . '/registros.lock', 'c');
+    if ($bloqueoRegistros === false || !flock($bloqueoRegistros, LOCK_EX)) {
+      throw new Exception('No se pudo bloquear el guardado. Intente nuevamente.');
+    }
     $accion = $_POST['accion'] ?? '';
     $registros = leerRegistros();
 
@@ -1236,32 +1292,6 @@ if ($accion === 'eliminar') {
         eliminarArchivoYCarpetasVacias($adjunto, ADJUNTOS_DIR);
       }
       $r['adjunto'] = '';
-
-      if (!empty($r['adjunto'])) {
-
-        $rutaRelativa = str_replace(['../', '..\\'], '', $r['adjunto']);
-        $archivo = __DIR__ . '/' . $rutaRelativa;
-
-        if (file_exists($archivo) && is_file($archivo)) {
-          @unlink($archivo);
-        }
-
-        // borrar carpetas vacÃ­as
-        $dir = dirname($archivo);
-        $limite = realpath(ADJUNTOS_DIR);
-
-        while ($dir && is_dir($dir) && realpath($dir) !== $limite) {
-
-          $restantes = array_diff(scandir($dir), ['.', '..']);
-
-          if (count($restantes) === 0) {
-            @rmdir($dir);
-            $dir = dirname($dir);
-          } else {
-            break;
-          }
-        }
-      }
 
       continue;
     }
@@ -2348,11 +2378,11 @@ function htmlText(txt){
 }
 
 function jsString(txt){
-  return String(txt || '')
+  return htmlAttr(String(txt || '')
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
     .replace(/\n/g, '\\n')
-    .replace(/\r/g, '');
+    .replace(/\r/g, ''));
 }
 
 function adjuntosLista(adjuntos){
@@ -2411,6 +2441,7 @@ async function apiGet(params){
 }
 
 async function apiPost(formData){
+  formData.set('csrf_token', <?= json_encode($_SESSION['csrf_token']) ?>);
   const res = await fetch('index.php', {
     method:'POST',
     body:formData,
@@ -2497,7 +2528,7 @@ document.getElementById('formCarga').addEventListener('submit', async function(e
     abrirTab('buscar', document.querySelector('.tab-btn'));
   }else{
     mensaje.className = 'mensaje error';
-    mensaje.innerHTML = textoVisible(data.error) || 'Error al guardar';
+    mensaje.textContent = textoVisible(data.error) || 'Error al guardar';
   }
 });
 
@@ -2541,17 +2572,17 @@ async function cargarRegistros(){
 
     const resultadoHtml = resultado
       ? `
-        <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${jsString(resultado)}', '${extResultado}', 'Resultado')">&#128065;</button>
-        <a class="link-btn icon-btn" title="Descargar archivo" href="${resultado}" download>&#11015;</a>
-        <button class="btn-mini" onclick="subirResultado('${r.id}')">Reemplazar</button>
+        <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${jsString(resultado)}', '${jsString(extResultado)}', 'Resultado')">&#128065;</button>
+        <a class="link-btn icon-btn" title="Descargar archivo" href="${htmlAttr(resultado)}" download>&#11015;</a>
+        <button class="btn-mini" onclick="subirResultado('${jsString(r.id)}')">Reemplazar</button>
       `
-      : `<button class="btn-mini" onclick="subirResultado('${r.id}')">Cargar resultado</button>`;
+      : `<button class="btn-mini" onclick="subirResultado('${jsString(r.id)}')">Cargar resultado</button>`;
 
     const tr = document.createElement('tr');
 
     tr.innerHTML = `
       <td>${htmlText(r.fechaCarga || '-')}</td>
-      <td><button type="button" class="nombre-link" onclick="abrirDetalle('${r.id}')">${htmlText(r.nombre || '-')}</button></td>
+      <td><button type="button" class="nombre-link" onclick="abrirDetalle('${jsString(r.id)}')">${htmlText(r.nombre || '-')}</button></td>
       <td>${htmlText(r.dni || '-')}</td>
 
       <td>
@@ -2568,25 +2599,25 @@ async function cargarRegistros(){
   ${
     r.estado === 'Pendiente'
       ? `
-        <button class="btn-mini" onclick="marcarRealizado('${r.id}', '${r.pagado}', ${Number(r.monto || 0)}, ${adjuntos.length ? 'true' : 'false'}, '${jsString(r.motivo || '')}')">
+        <button class="btn-mini" onclick="marcarRealizado('${jsString(r.id)}', '${jsString(r.pagado)}', ${Number(r.monto || 0)}, ${adjuntos.length ? 'true' : 'false'}, '${jsString(r.motivo || '')}')">
           Realizar
         </button>
 
-        <button class="light icon-btn" title="Editar registro" onclick="abrirEditar('${r.id}')">
+        <button class="light icon-btn" title="Editar registro" onclick="abrirEditar('${jsString(r.id)}')">
           &#9999;
         </button>
 
-        <button class="danger icon-btn" title="Eliminar registro" onclick="eliminarRegistro('${r.id}')">
+        <button class="danger icon-btn" title="Eliminar registro" onclick="eliminarRegistro('${jsString(r.id)}')">
           &#128465;
         </button>
       `
       : `
 
-        <button class="light icon-btn" title="Editar registro" onclick="abrirEditar('${r.id}')">
+        <button class="light icon-btn" title="Editar registro" onclick="abrirEditar('${jsString(r.id)}')">
           &#9999;
         </button>
 
-        <button class="danger icon-btn" title="Eliminar registro" onclick="eliminarRegistro('${r.id}')">
+        <button class="danger icon-btn" title="Eliminar registro" onclick="eliminarRegistro('${jsString(r.id)}')">
           &#128465;
         </button>
       `
@@ -2608,7 +2639,7 @@ function archivoBotones(url, ext, titulo){
   const safeTitulo = jsString(titulo || 'Archivo');
 
   return `
-    <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${safeUrl}', '${ext}', '${safeTitulo}')">&#128065;</button>
+    <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${safeUrl}', '${jsString(ext)}', '${safeTitulo}')">&#128065;</button>
     <a class="link-btn icon-btn" title="Descargar archivo" href="${htmlAttr(url)}" download>&#11015;</a>
   `;
 }
@@ -2622,7 +2653,7 @@ function archivosPedidoHtml(adjuntos){
   }
 
   return `
-    <button class="btn-mini" onclick="verListaArchivos('${encodeURIComponent(JSON.stringify(adjuntos))}', 'Pedidos')">
+    <button class="btn-mini" onclick="verListaArchivos('${jsString(encodeURIComponent(JSON.stringify(adjuntos)))}', 'Pedidos')">
       Ver archivos (${adjuntos.length})
     </button>
   `;
@@ -2716,7 +2747,7 @@ function abrirDetalle(id){
         <p><strong>Fecha resultado:</strong> ${htmlText(r.fechaResultado || '-')}</p>
         <div class="detalle-actions">
           ${archivoBotones(resultado, extResultado, 'Resultado')}
-          <button class="btn-mini" onclick="subirResultado('${r.id}')">${resultado ? 'Reemplazar resultado' : 'Cargar resultado'}</button>
+          <button class="btn-mini" onclick="subirResultado('${jsString(r.id)}')">${resultado ? 'Reemplazar resultado' : 'Cargar resultado'}</button>
         </div>
       </div>
 
@@ -2726,7 +2757,7 @@ function abrirDetalle(id){
         <p><strong>Fecha email:</strong> ${htmlText(r.fechaEmail || '-')}</p>
         <p><strong>Error email:</strong> ${htmlText(r.errorEmail || '-')}</p>
         <div class="detalle-actions">
-          ${r.email && resultado ? `<button class="btn-mini" onclick="reenviarEmail('${r.id}')">Reenviar email</button>` : ''}
+          ${r.email && resultado ? `<button class="btn-mini" onclick="reenviarEmail('${jsString(r.id)}')">Reenviar email</button>` : ''}
         </div>
       </div>
 
@@ -2917,7 +2948,7 @@ document.getElementById('formEditar').addEventListener('submit', async function(
     alert('Registro actualizado correctamente');
   }else{
     mensaje.className = 'mensaje error';
-    mensaje.innerHTML = textoVisible(data.error) || 'Error al guardar';
+    mensaje.textContent = textoVisible(data.error) || 'Error al guardar';
   }
 });
 
@@ -3089,7 +3120,7 @@ function verListaArchivos(adjuntosJson, titulo){
         <div class="archivo-item">
           <span>${htmlText(nombreArchivo(url))}</span>
           <div>
-            <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${jsString(url)}', '${extensionArchivo(url)}', 'Pedido ${i + 1}')">&#128065;</button>
+            <button class="light icon-btn" title="Ver archivo" onclick="verArchivo('${jsString(url)}', '${jsString(extensionArchivo(url))}', 'Pedido ${i + 1}')">&#128065;</button>
             <a class="link-btn icon-btn" title="Descargar archivo" href="${htmlAttr(url)}" download>&#11015;</a>
           </div>
         </div>

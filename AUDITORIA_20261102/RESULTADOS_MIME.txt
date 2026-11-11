@@ -1,0 +1,1 @@
+OK: PHPMailer original genera MIME, asunto UTF-8 y adjunto PDF mediante preSend(), sin send() ni conexión SMTP.

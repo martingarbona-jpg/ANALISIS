@@ -1,0 +1,10 @@
+auth_config.php
+smtp_config.php
+registros.json
+registros.lock
+registros_tmp_*
+logs/
+adjuntos/
+resultados/
+.env
+*.sql

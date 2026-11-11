@@ -1,0 +1,8 @@
+OK: Envío simulado actualiza estado y fecha
+OK: Configuración SMTP se carga de las mismas constantes
+OK: Destinatario, copia oculta y adjunto conservados
+OK: Fallo SMTP simulado conserva resultado y marca error
+OK: Error devuelto al formulario y guardado en registros no expone clave ficticia
+OK: Log no expone la clave ficticia ni en ErrorInfo ni en excepción
+OK: Reenvío conserva contraseña y no modifica configuración SMTP
+OK: Correo rechaza adjuntos fuera de resultados

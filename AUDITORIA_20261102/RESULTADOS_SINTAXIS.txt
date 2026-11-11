@@ -1,0 +1,6 @@
+No syntax errors detected in C:\laragon\www\ANALISIS\index.php
+No syntax errors detected in C:\laragon\www\ANALISIS\AUDITORIA_20261102\phpmailer_mime.php
+No syntax errors detected in C:\laragon\www\ANALISIS\AUDITORIA_20261102\smtp_simulado.php
+No syntax errors detected in C:\laragon\www\ANALISIS\phpmailer\src\Exception.php
+No syntax errors detected in C:\laragon\www\ANALISIS\phpmailer\src\PHPMailer.php
+No syntax errors detected in C:\laragon\www\ANALISIS\phpmailer\src\SMTP.php

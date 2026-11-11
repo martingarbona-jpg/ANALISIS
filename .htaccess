@@ -1,0 +1,14 @@
+# Apache 2.4 / LiteSpeed: mantener documentos privados y fuera del intérprete PHP.
+Options -Indexes -MultiViews
+RewriteEngine On
+
+# No publicar repositorio, respaldos, informes, registros ni diagnósticos.
+RewriteRule (^|/)\. - [F,END]
+RewriteRule ^(?:BACKUP_ANTES_AUDITORIA_20261102|AUDITORIA_20261102|logs|phpmailer|vendor)(?:/|$) - [F,END,NC]
+RewriteRule ^(?:registros\.json|registros\.lock|registros_tmp_.*|smtp_config\.php|auth_config\.php|auth\.php)$ - [F,END,NC]
+
+# Bloquear ejecución de scripts en carpetas de documentos.
+RewriteRule ^(?:adjuntos|resultados)/.*\.(?:php[0-9]?|phtml|phar|cgi|pl)$ - [F,END,NC]
+
+# B escapa los nombres; sin QSA la query original no reemplaza la ruta resuelta.
+RewriteRule ^((?:adjuntos|resultados)/.*)$ index.php?archivo=$1 [B,END,NC]

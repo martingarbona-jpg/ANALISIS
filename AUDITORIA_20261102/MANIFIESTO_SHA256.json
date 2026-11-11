@@ -1,0 +1,41 @@
+{
+  "Fecha": "2026-11-02",
+  "Alcance": "Copia local; no escaneo Imunify360 ni despliegue",
+  "PHPMailer": {
+    "Version": "6.10.0",
+    "Comparacion": "Los tres archivos idénticos al tag oficial normalizando CRLF/LF",
+    "Origen": "https://github.com/PHPMailer/PHPMailer/tree/v6.10.0/src"
+  },
+  "Archivos": [
+    {
+      "Archivo": "BACKUP_ANTES_AUDITORIA_20261102/index.php",
+      "Bytes": 86906,
+      "SHA256": "73C18B37C8842DF5906A1821D5B9A493D7EA057220C7DA61BF04FA7448371739"
+    },
+    {
+      "Archivo": "index.php",
+      "Bytes": 91133,
+      "SHA256": "2DB33B1528E905822E492D4E454FE6A7201EA8D639DA275D922AB4E0063264D0"
+    },
+    {
+      "Archivo": ".htaccess",
+      "Bytes": 601,
+      "SHA256": "B2AF7C92D55687ACCB5D1CED5685683C71B6DECC70F4EBEE9D41CE47617DD7FA"
+    },
+    {
+      "Archivo": "phpmailer/src/Exception.php",
+      "Bytes": 1296,
+      "SHA256": "EEEE4055F266E8370208F8CB6102F5FBF9085A1655AC2B89762BA6123289D580"
+    },
+    {
+      "Archivo": "phpmailer/src/PHPMailer.php",
+      "Bytes": 193132,
+      "SHA256": "FFB48ACADB65AB8C6AB643BA0030BD026A20A338B8E091BC9EA00CA2EE28345A"
+    },
+    {
+      "Archivo": "phpmailer/src/SMTP.php",
+      "Bytes": 51644,
+      "SHA256": "887961C29722612283C63ED1A05F2C54DF4DEFDEF690E99A4BB1A90404241300"
+    }
+  ]
+}
